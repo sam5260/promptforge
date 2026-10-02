@@ -1,0 +1,75 @@
+{
+  "id": "cyber.api",
+  "domain": "cyber",
+  "name": "API Security Audit Prompt",
+  "summary": "REST/GraphQL API audit: object-level authz, mass assignment, rate limits, schema abuse.",
+  "slots": [
+    {
+      "name": "target",
+      "label": "API base/definition",
+      "required": true,
+      "default": null,
+      "hint": "base URL or OpenAPI/GraphQL schema location"
+    },
+    {
+      "name": "api_style",
+      "label": "API style",
+      "required": false,
+      "default": "REST",
+      "hint": "REST / GraphQL / gRPC / RPC"
+    },
+    {
+      "name": "auth_scheme",
+      "label": "Auth scheme",
+      "required": false,
+      "default": "Bearer JWT",
+      "hint": "how clients authenticate"
+    },
+    {
+      "name": "objects",
+      "label": "Key objects",
+      "required": true,
+      "default": null,
+      "hint": "e.g. users, orders, invoices, files"
+    },
+    {
+      "name": "scopes",
+      "label": "Scopes/permissions",
+      "required": false,
+      "default": "unknown",
+      "hint": "declared scope names if any"
+    }
+  ],
+  "system": "You are an API security specialist. You reason about APIs as graphs of objects and permissions: every endpoint is (identity) -> (verb) -> (object), and every vulnerability is a mismatch in that triple. You prefer systematic enumeration — one authorization matrix over ten random payloads — and you document the matrix you built.",
+  "task": "Audit the {api_style} API at {target} authenticated via {auth_scheme}. Core objects to protect: {objects}. Known scopes/permissions: {scopes}.",
+  "methodology": [
+    "Build the endpoint inventory from the schema and from traffic: undocumented and deprecated routes are first-class targets.",
+    "Construct the authorization matrix: identity (anonymous, low-priv user, other user, admin) x verb x object from {objects}; fill it with real requests.",
+    "Hunt object-level authorization failures (BOLA): swap identifiers, use predictable/enumerable IDs, nested and batch references, UUID-vs-sequential analysis.",
+    "Hunt function-level failures (BFLA): method tampering (GET/POST/PUT/PATCH/OPTIONS), header overrides (X-HTTP-Method-Override), role field in body.",
+    "Test mass assignment: send extra fields (role, verified, balance, owner_id) on create/update and check whether the server persists them.",
+    "For {api_style} specifics: GraphQL — introspection, batching/alias cost bypass, field-level authz, mutation IDOR; REST — pagination abuse, cache key confusion, content-type downgrade.",
+    "Test {auth_scheme} handling: algorithm confusion, kid/jku injection, expired-token replay, scope claims not enforced server-side, refresh-token rotation gaps.",
+    "Check rate limiting and quota per endpoint class (auth, read, write, expensive operations) — note silently-accepted flooding."
+  ],
+  "output": [
+    "The filled authorization matrix as a table (identity x object x verdict) — this is evidence, not decoration.",
+    "Findings with: endpoint, method, full request, server response proving the failure, affected objects, business impact, fix.",
+    "Endpoint inventory with coverage status: tested / untestable (why) / out of scope.",
+    "Rate-limit profile table: endpoint class vs observed threshold vs expected."
+  ],
+  "checklist": [
+    "matrix | an authorization matrix covering identities and objects is included",
+    "mass assignment | extra-field persistence was explicitly tested and reported either way",
+    "endpoint | every finding identifies the exact endpoint and method",
+    "inventory | endpoint inventory shows coverage per route",
+    "token | auth token handling (algorithm, replay, scopes) was tested"
+  ],
+  "negative": [
+    "Do not report 'IDOR possible' without a filled matrix row proving it.",
+    "Do not treat 403 with a different body length as proof of a bypass without confirming the protected action completed.",
+    "Do not ignore batch and bulk endpoints — they multiply every object-level flaw."
+  ],
+  "spec_version": "2.0",
+  "last_reviewed": "2026-10-03"
+}

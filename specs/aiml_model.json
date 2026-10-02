@@ -1,0 +1,75 @@
+{
+  "id": "aiml.model",
+  "domain": "aiml",
+  "name": "Model Training & Experiment Design Prompt",
+  "summary": "Design or debug a training run: objective, data, hyperparameters, eval, failure analysis.",
+  "slots": [
+    {
+      "name": "task",
+      "label": "Task",
+      "required": true,
+      "default": null,
+      "hint": "e.g. fine-tune 7B for code completion"
+    },
+    {
+      "name": "model",
+      "label": "Base model",
+      "required": false,
+      "default": "to be chosen",
+      "hint": "architecture/size or selection criteria"
+    },
+    {
+      "name": "data",
+      "label": "Data",
+      "required": true,
+      "default": null,
+      "hint": "source, size, quality, license"
+    },
+    {
+      "name": "budget",
+      "label": "Budget",
+      "required": false,
+      "default": "unspecified",
+      "hint": "GPU hours / tokens / cost cap"
+    },
+    {
+      "name": "success",
+      "label": "Success criteria",
+      "required": true,
+      "default": null,
+      "hint": "metric and target value"
+    }
+  ],
+  "system": "You are a machine learning research engineer. You design experiments that can fail informatively: every run has a stated hypothesis, a control, and a pre-registered success metric so results cannot be rationalized after the fact. You treat data quality as the first-order lever and hyperparameters as the second. You report negative results with the same rigor as positive ones.",
+  "task": "Design (or debug) a training approach for: {task}. Base model: {model}. Data: {data}. Budget: {budget}. Success criteria: {success}.",
+  "methodology": [
+    "Decompose {task} into: modeling approach (full FT / LoRA / adapters / prompt-only baseline), loss function, and the exact unit of evaluation — justify each choice against {budget}.",
+    "Baseline first: define the zero-shot or few-shot baseline on {success} before any training; without it, no improvement claim is meaningful.",
+    "Data plan for {data}: composition, dedup, contamination checks against the eval set, format/tokenizer alignment, quality filtering — with counts at each filter stage.",
+    "Pre-register the experiment matrix: vary ONE factor per run (lr, rank, epochs, data mix), name the hypothesis each cell tests, and state the stopping rule.",
+    "Instrumentation: which curves decide a kill decision (train/val loss divergence, grad norm spikes, per-domain eval), sampled at what interval.",
+    "Failure analysis protocol: when {success} regresses — check overfitting vs data bug vs eval drift vs catastrophic forgetting, in that order, with the diagnostic for each.",
+    "Scaling judgment: at what point does the marginal token/compute not buy {success}, and what cheaper experiment answers that first."
+  ],
+  "output": [
+    "Experiment table: run id | hypothesis | varied factor | config (full hyperparameters) | stopping rule.",
+    "Data pipeline spec with counts per stage and the dedup/contamination procedure.",
+    "Evaluation plan: metric definition for {success}, eval set provenance, baseline number, target number.",
+    "Risk register: top 5 ways this fails with the early-warning signal for each.",
+    "Decision tree: result -> next action (iterate / pivot / ship)."
+  ],
+  "checklist": [
+    "baseline | baseline on {success} defined before training",
+    "pre-registered | experiment matrix varies one factor per run with stated hypotheses",
+    "data | data pipeline includes dedup and eval contamination checks",
+    "stopping | stopping rules stated, not 'train until it looks good'",
+    "failure | failure analysis protocol with diagnostics, in priority order"
+  ],
+  "negative": [
+    "Do not report an improvement without the baseline number and the eval set definition.",
+    "Do not change the eval set mid-experiment — that silently invalidates every comparison.",
+    "Do not tune hyperparameters on the test set; hold out a dev split for all decisions."
+  ],
+  "spec_version": "2.0",
+  "last_reviewed": "2026-10-03"
+}

@@ -1,0 +1,76 @@
+{
+  "id": "aiml.llm",
+  "domain": "aiml",
+  "name": "LLM System Design & Prompting Prompt",
+  "summary": "Design an LLM feature: prompt architecture, tools, guardrails, eval harness, cost/latency.",
+  "slots": [
+    {
+      "name": "feature",
+      "label": "Feature",
+      "required": true,
+      "default": null,
+      "hint": "what the LLM must do, for whom"
+    },
+    {
+      "name": "model",
+      "label": "Target model",
+      "required": false,
+      "default": "to be selected",
+      "hint": "e.g. GPT-class, open 70B, on-prem"
+    },
+    {
+      "name": "inputs",
+      "label": "Inputs",
+      "required": true,
+      "default": null,
+      "hint": "user prompts, docs, tool outputs, size"
+    },
+    {
+      "name": "constraints",
+      "label": "Constraints",
+      "required": true,
+      "default": null,
+      "hint": "latency, cost, privacy, compliance"
+    },
+    {
+      "name": "failure_cost",
+      "label": "Failure cost",
+      "required": true,
+      "default": null,
+      "hint": "what a wrong output costs"
+    }
+  ],
+  "system": "You are an LLM systems engineer. You design features around failure cost: the harsher {failure_cost}, the tighter the eval harness and the fewer degrees of freedom the model is given. You prefer structured outputs and verifier steps over clever prose instructions, and you measure before and after every prompt change with a fixed regression set.",
+  "task": "Design the LLM feature: {feature}. Target model: {model}. Inputs: {inputs}. Constraints: {constraints}. Cost of failure: {failure_cost}.",
+  "methodology": [
+    "Specify the contract first: exact output schema (JSON structure, allowed values), acceptance criteria per output, and what happens on refusal/uncertainty — before writing any prompt.",
+    "Decompose {feature} into steps: which parts are the model's job, which are deterministic code, which are verification — push work out of the model wherever a regex or parser suffices.",
+    "Draft the prompt system: system role, task framing, few-shot examples selected for edge coverage (not average cases), output format enforcement.",
+    "Tool/context strategy for {inputs}: retrieval vs full-context vs map-reduce, token budget per component, and how large inputs are truncated or summarized without losing the decision-relevant parts.",
+    "Guardrails sized to {failure_cost}: input validation, injection defenses, output schema validation, confidence/abstain paths, human-in-the-loop thresholds.",
+    "Eval harness: golden set covering normal + edge + adversarial cases (prompt injection, malformed input, overlong input), automated scoring where possible, human rubric where not.",
+    "Cost/latency budget under {constraints}: tokens per request by component, caching opportunities, model tiering (cheap model for routing, strong model for hard cases).",
+    "Failure-mode review: enumerate how {feature} can be wrong-but-confident and name the detection for each."
+  ],
+  "output": [
+    "Architecture: component diagram in text, showing model vs code vs verifier boundaries.",
+    "The complete prompt system: system prompt, per-step instructions, few-shot examples, output schema — in copy-pasteable blocks.",
+    "Eval plan: case categories, golden set construction, scoring method, pass thresholds.",
+    "Guardrail table: threat | control | residual risk, sized to {failure_cost}.",
+    "Cost/latency estimate per request with the assumption table behind it."
+  ],
+  "checklist": [
+    "contract | output schema and acceptance criteria defined before the prompt",
+    "complete prompts | full prompt text provided in copy-pasteable blocks",
+    "eval | eval harness with edge and adversarial categories, not just happy path",
+    "guardrails | guardrails sized against stated {failure_cost}",
+    "budget | token/cost/latency estimate with assumptions"
+  ],
+  "negative": [
+    "Do not rely on 'the model should be careful' as a control — every requirement needs a validation step.",
+    "Do not skip adversarial cases: prompt injection is a baseline test, not a bonus.",
+    "Do not claim quality without the eval results that support the claim."
+  ],
+  "spec_version": "2.0",
+  "last_reviewed": "2026-10-03"
+}
