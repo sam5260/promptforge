@@ -251,5 +251,83 @@ class TestExitCodes(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
 
 
+class TestRobustnessRegressions(unittest.TestCase):
+    """each test pins a defect reproduced before its fix (empirical anchoring)"""
+
+    def test_fix_preserves_duplicate_task_sections(self):
+        spec = spec_of("cyber.web")
+        vals = full_values(spec)
+        text = ("## Task\nDo the primary thing against {target}.\n"
+                "## Task\nSecondary user objectives that must survive: keep every note.\n"
+                "## Role\nYou are a tester.\n")
+        fixed, _ = forge.fix_prompt(spec, text, vals)
+        self.assertIn("Secondary user objectives", fixed)
+
+    def test_print_judge_lists_unresolved_placeholders(self):
+        import io, contextlib
+        spec = spec_of("cyber.web")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            forge.print_judge(forge.judge(spec, "## Task\nhello {target}\n"), "t")
+        out = buf.getvalue()
+        self.assertIn("no unresolved placeholders", out)
+        self.assertIn("{target}", out)
+
+    def test_json_format_honors_out_in_all_commands(self):
+        import io, contextlib, tempfile
+        tmp = Path(tempfile.mkdtemp())
+        a = tmp / "a.txt"
+        a.write_text("## Task\nDo it against {target}\n## Role\nYou are x\n",
+                     encoding="utf-8")
+        b = tmp / "b.txt"
+        b.write_text("## Output contract\n- Structured result\n", encoding="utf-8")
+        cases = [
+            (["gen", "cyber.web", "-s", "target=t", "-s", "scope=s", "--yes"],
+             tmp / "g.json"),
+            (["fix", "cyber.web", str(a), "-s", "target=t", "-s", "scope=s",
+              "--yes"], tmp / "f.json"),
+            (["merge", "cyber.web", str(a), str(b), "-s", "target=t",
+              "-s", "scope=s"], tmp / "m.json"),
+            (["ensemble", "cyber.web", str(a), "-s", "target=t", "-s", "scope=s",
+              "--seed", "1", "--attempts", "3"], tmp / "e.json"),
+        ]
+        for base, out in cases:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = forge.main(base + ["--format", "json", "-o", str(out)])
+            self.assertEqual(rc, 0, base)
+            self.assertTrue(out.exists(), f"-o silently ignored by {base[0]}")
+            self.assertGreater(out.stat().st_size, 100, base)
+            payload = json.loads(buf.getvalue())
+            if base[0] == "ensemble":
+                self.assertIn("prompt", payload["top"][0])
+            else:
+                self.assertIn("prompt", payload)
+
+    def test_interactive_eof_becomes_missing_slot(self):
+        from unittest import mock
+        spec = spec_of("cyber.web")
+        with mock.patch("builtins.input", side_effect=EOFError):
+            with self.assertRaises(forge.MissingSlot):
+                forge.slot_values(spec, {}, interactive=True)
+
+    def test_ensemble_top_zero_rejected(self):
+        import tempfile, os
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False,
+                                         encoding="utf-8") as f:
+            f.write("## Task\nDo it\n")
+            src = f.name
+        try:
+            r = run("ensemble", "cyber.web", src, "--top", "0")
+            self.assertEqual(r.returncode, forge.EXIT_INPUT, r.stdout + r.stderr)
+        finally:
+            os.unlink(src)
+
+    def test_unknown_slot_flagged_not_silently_dropped(self):
+        r = run("gen", "cyber.web", "-s", "bogus_key=1", "--yes")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("bogus_key", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

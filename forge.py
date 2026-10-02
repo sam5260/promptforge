@@ -239,7 +239,12 @@ def slot_values(spec, provided, interactive=False, assume_yes=False,
                 warnings.append(f"slot '{slot['name']}' has no value — passed as '{fill_missing}'")
         elif interactive:
             hint = slot.get("hint", "")
-            answer = input(f"  {slot['name']}" + (f" ({hint})" if hint else "") + ": ").strip()
+            try:
+                answer = input(
+                    f"  {slot['name']}" + (f" ({hint})" if hint else "") + ": "
+                ).strip()
+            except EOFError:
+                raise MissingSlot(slot["name"]) from None
             if not answer:
                 raise MissingSlot(slot["name"])
             values[slot["name"]] = answer
@@ -359,9 +364,7 @@ def print_judge(result, title, as_json=False):
         detail = ""
         if s["key"] == "placeholders" and s.get("detail"):
             detail = ": " + ", ".join(s["detail"])
-        elif not s["pass"] and s["key"] == "placeholders":
-            detail = ""
-        print(f"  [{mark}] {STRUCT_LABELS[s['key']]}")
+        print(f"  [{mark}] {STRUCT_LABELS[s['key']]}{detail}")
 
 
 # ---------------------------------------------------------------- fix
@@ -442,9 +445,9 @@ def fix_prompt(spec, text, values):
                     body.append(gline)
                     report["lines_added"].append(gline)
 
+    represented = {id(b) for _, b in keys.values()}
     ordered = [(h, b) for k, (h, b) in keys.items() if k in STRUCT_REQUIRED]
-    extras = [(h, b) for h, b in sections
-              if heading_key(h) not in STRUCT_REQUIRED]
+    extras = [(h, b) for h, b in sections if id(b) not in represented]
     fixed = join_sections(preamble, ordered + extras)
     report["unresolved"] = PLACEHOLDER_RE.findall(fixed)
     return fixed, report
@@ -810,6 +813,11 @@ def main(argv=None):
 
         spec = get_spec(specs, args.field)
         provided = parse_set(getattr(args, "set", None))
+        unknown = [k for k in provided
+                   if k not in {s["name"] for s in spec.get("slots", [])}]
+        if unknown:
+            print(f"[warn] ignoring unknown slot(s): {', '.join(sorted(unknown))}",
+                  file=sys.stderr)
 
         if args.command == "show":
             cmd_show(spec)
@@ -831,6 +839,9 @@ def main(argv=None):
             prompt = build(spec, values, args.mode)
             if fmt_json:
                 print(json.dumps(gen_payload(spec, values, args.mode, prompt), indent=2))
+                if args.out:
+                    Path(args.out).write_text(prompt, encoding="utf-8")
+                    print(f"[+] wrote {args.out} ({len(prompt)} bytes)", file=sys.stderr)
             elif args.out:
                 Path(args.out).write_text(prompt, encoding="utf-8")
                 print(f"[+] wrote {args.out} ({len(prompt)} bytes)")
@@ -857,6 +868,9 @@ def main(argv=None):
                 print(json.dumps({"field": spec["id"], "before": before["score"],
                                   "after": after["score"], "report": rep,
                                   "diff": diff, "prompt": fixed}, indent=2))
+                if args.out:
+                    Path(args.out).write_text(fixed, encoding="utf-8")
+                    print(f"[+] wrote fixed prompt to {args.out}", file=sys.stderr)
                 return EXIT_OK
             print(f"fix: {spec['id']} / {args.file}")
             for w in warnings:
@@ -919,6 +933,9 @@ def main(argv=None):
                 print(json.dumps({"field": spec["id"], "a": ra["score"],
                                   "b": rb["score"], "merged": rm["score"],
                                   "meta": meta, "prompt": merged}, indent=2))
+                if args.out:
+                    Path(args.out).write_text(merged, encoding="utf-8")
+                    print(f"[+] wrote {args.out}", file=sys.stderr)
                 return EXIT_OK
             print(f"merge: {spec['id']}")
             for w in warnings:
@@ -935,6 +952,9 @@ def main(argv=None):
             return EXIT_OK
 
         if args.command == "ensemble":
+            if args.top < 1:
+                print("[!] --top must be >= 1", file=sys.stderr)
+                return EXIT_INPUT
             text = read_file(args.file)
             values, warnings = slot_values(spec, provided, missing_ok=True)
             ranked, log = ensemble(spec, text, values, attempts=args.attempts,
@@ -943,6 +963,9 @@ def main(argv=None):
                 print(json.dumps({"field": spec["id"], "log": log,
                                   "top": [{"score": s, "prompt": t}
                                           for s, t in ranked]}, indent=2))
+                if args.out:
+                    Path(args.out).write_text(ranked[0][1], encoding="utf-8")
+                    print(f"[+] wrote best candidate to {args.out}", file=sys.stderr)
                 return EXIT_OK
             print(f"ensemble: {spec['id']}  attempts={args.attempts}")
             for w in warnings:
