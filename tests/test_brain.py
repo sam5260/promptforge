@@ -160,18 +160,19 @@ class TestCompileWithBrain(unittest.TestCase):
         sid = "cyber.web"
         for _ in range(int(brain.AUTO_APPLY)):
             brain.record("slot_override", sid, "target", "https://prod.example.com")
-        res = forge.compile_prompt("audit the login flow for sqli")
+        res = forge.compile_prompt("audit the login flow for sqli",
+                                   use_brain=True)
         self.assertIn("prod.example.com", res["prompt"])
 
     def test_explicit_text_beats_learned_pref(self):
         sid = "cyber.web"
         for _ in range(int(brain.AUTO_APPLY)):
             brain.record("slot_override", sid, "target", "https://prod.example.com")
-        res = forge.compile_prompt(self.chat)
+        res = forge.compile_prompt(self.chat, use_brain=True)
         self.assertIn("staging.example.com", res["prompt"])
 
     def test_compile_no_template_universal_fallback(self):
-        res = forge.compile_prompt("just chatting about lunch")
+        res = forge.compile_prompt("just chatting about lunch", use_brain=True)
         self.assertEqual(res["report"]["spec_id"], "general")
         self.assertEqual(res["report"]["field"], "General")
         self.assertIn("## Role", res["prompt"])
@@ -179,7 +180,7 @@ class TestCompileWithBrain(unittest.TestCase):
         self.assertGreater(res["score"], 0)
 
     def test_compile_report_shape(self):
-        res = forge.compile_prompt(self.chat)
+        res = forge.compile_prompt(self.chat, use_brain=True)
         rep = res["report"]
         self.assertEqual(rep["spec_id"], "cyber.web")
         self.assertIn("inferred", rep)

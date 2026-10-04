@@ -58,6 +58,17 @@ def err_from(exc):
     return 500, {"ok": False, "error": f"[!] {exc}"}
 
 
+def _as_of_or_400(value):
+    if value in (None, ""):
+        return None
+    try:
+        brain.as_of_day(value)
+    except (ValueError, TypeError) as exc:
+        raise ApiError(400, f"[!] bad as_of — expected YYYY-MM-DD: "
+                            f"{value!r}") from exc
+    return value
+
+
 def spec_or_400(field):
     specs = forge.load_specs()
     return forge.get_spec(specs, field)
@@ -113,7 +124,12 @@ def api_gen(query, body):
     spec = spec_or_400(body.get("field", ""))
     provided = body.get("slots") or {}
     yes = bool(body.get("yes", True))
-    values, warnings = forge.slot_values(spec, provided,
+    use_brain = bool(body.get("use_brain", body.get("learned", True)))
+    as_of = _as_of_or_400(body.get("as_of"))
+    slots = dict(provided)
+    if use_brain:
+        slots = {**brain.slot_prefs(spec["id"], as_of=as_of), **slots}
+    values, warnings = forge.slot_values(spec, slots,
                                          interactive=False, assume_yes=yes)
     if body.get("strict"):
         bad = [s["name"] for s in spec.get("slots", [])
@@ -124,9 +140,10 @@ def api_gen(query, body):
             raise ApiError(400, "[!] strict: required slots unresolved: "
                                 + ", ".join(bad))
     prompt = forge.build(spec, values, body.get("mode", "full"))
+    payload = forge.gen_payload(spec, values, body.get("mode", "full"), prompt)
+    payload.update(forge.brain_meta(use_brain, as_of))
     return ok({"prompt": prompt, "values": values, "warnings": warnings,
-               "payload": forge.gen_payload(spec, values,
-                                            body.get("mode", "full"), prompt)})
+               "payload": payload})
 
 
 def api_check(query, body):
@@ -246,8 +263,9 @@ def api_compile(query, body):
     res = forge.compile_prompt(
         text, spec_id=body.get("spec"),
         explicit=body.get("slots") or None,
-        learned=body.get("learned", True),
-        mode=body.get("mode", "full"))
+        use_brain=bool(body.get("use_brain", body.get("learned", True))),
+        mode=body.get("mode", "full"),
+        as_of=_as_of_or_400(body.get("as_of")))
     return ok(res)
 
 

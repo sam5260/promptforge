@@ -11,6 +11,23 @@ import forge  # noqa: E402
 
 PY = sys.executable
 FORGE = str(ROOT / "forge.py")
+_BRAIN_TMP = None
+
+
+def setUpModule():
+    global _BRAIN_TMP
+    import os
+    import tempfile
+    _BRAIN_TMP = tempfile.TemporaryDirectory()
+    os.environ["PROMPTFORGE_BRAIN_DB"] = str(
+        Path(_BRAIN_TMP.name) / "brain.db")
+
+
+def tearDownModule():
+    global _BRAIN_TMP
+    import os
+    os.environ.pop("PROMPTFORGE_BRAIN_DB", None)
+    _BRAIN_TMP.cleanup()
 
 
 def run(*args, stdin=None):

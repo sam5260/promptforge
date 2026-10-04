@@ -6,7 +6,10 @@ weights are deterministic: count x recency decay (half-life 30 days).
 auto-apply threshold: effective weight >= 3. everything stays on this machine.
 """
 
+import datetime
+import hashlib
 import json
+import os
 import re
 import sqlite3
 import time
@@ -51,11 +54,35 @@ def set_db(path):
     DB_PATH = Path(path)
 
 
+def _db_path():
+    """PROMPTFORGE_BRAIN_DB env wins (subprocess / eval isolation), else DB_PATH"""
+    env = os.environ.get("PROMPTFORGE_BRAIN_DB")
+    return Path(env) if env else DB_PATH
+
+
+def as_of_day(as_of=None):
+    """day-granular decay date: None -> today; accepts date, datetime, ISO str"""
+    if as_of is None:
+        return datetime.date.today()
+    if isinstance(as_of, datetime.datetime):
+        return as_of.date()
+    if isinstance(as_of, datetime.date):
+        return as_of
+    return datetime.date.fromisoformat(str(as_of))
+
+
+def _as_of_ts(as_of=None):
+    day = as_of_day(as_of)
+    return datetime.datetime(day.year, day.month, day.day,
+                             tzinfo=datetime.timezone.utc).timestamp()
+
+
 @contextmanager
 def _db():
     """open-commit-close per call: threading-safe, no lingering file locks"""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH, timeout=10)
+    path = _db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(path, timeout=10)
     try:
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA journal_mode=WAL")
@@ -160,9 +187,10 @@ def learn_from_diff(spec_id, generated, corrected):
     return {"learned": learned, "ignored": ignored, "spec_id": spec_id or ""}
 
 
-def suggest(spec_id=None, min_effective=0.0):
-    """all patterns with effective weight + auto/suggest status"""
-    now = time.time()
+def suggest(spec_id=None, min_effective=0.0, as_of=None):
+    """all patterns with effective weight + auto/suggest status.
+    as_of=None -> live clock (UI); a date pins decay to that day (reproducible)"""
+    now = time.time() if as_of is None else _as_of_ts(as_of)
     q = "SELECT * FROM events"
     args = ()
     if spec_id:
@@ -209,7 +237,7 @@ def status():
             if _decayed(row["count"], row["last_seen_ts"], now) >= AUTO_APPLY:
                 auto += 1
     return {
-        "db": str(DB_PATH), "patterns": n_patterns,
+        "db": str(_db_path()), "patterns": n_patterns,
         "auto_active": auto,
         "by_kind": {r["kind"]: {"patterns": r["n"], "hits": r["hits"] or 0}
                     for r in rows},
@@ -226,11 +254,11 @@ def export_json():
                        "patterns": rows}, indent=2, ensure_ascii=False)
 
 
-def slot_prefs(spec_id):
+def slot_prefs(spec_id, as_of=None):
     """effective slot overrides -> {slot: value} (auto tier only)"""
     out = {}
     with _db() as con:
-        now = time.time()
+        now = _as_of_ts(as_of)
         for row in con.execute(
                 "SELECT norm, sample, count, last_seen_ts FROM events "
                 "WHERE kind='slot_override' AND spec_id=?", (spec_id,)):
@@ -244,12 +272,13 @@ def _strip_previous_prefs(text):
     return text[:idx].rstrip() if idx != -1 else text
 
 
-def apply(spec_id, prompt, use_learned=True):
-    """post-build: strip learned boilerplate, append auto-tier preferences"""
+def apply(spec_id, prompt, use_learned=True, as_of=None):
+    """post-build: strip learned boilerplate, append auto-tier preferences.
+    as_of pins the decay day (default today) so a compile is reproducible."""
     report = {"suppressed": [], "added": [], "considered": 0}
     if not use_learned:
         return prompt, report
-    patterns = suggest(spec_id)
+    patterns = suggest(spec_id, as_of=as_of_day(as_of))
     boiler = [p for p in patterns
               if p["kind"] == "boilerplate_removed" and p["status"] == "auto"]
     prefs = [p for p in patterns
@@ -298,3 +327,30 @@ def apply(spec_id, prompt, use_learned=True):
         report["added"] = additions
     out = "\n".join(kept).rstrip() + "\n"
     return out, report
+
+
+def payload_hash(as_of=None, applied=True):
+    """sha256 of the effective auto-tier payload + as_of day — provenance only,
+    never embedded in prompt text. applied=False (use_brain off) hashes an
+    empty rule set: that output depends on nothing in this DB, so the hash
+    must not either. sub-threshold rules can't change output -> excluded, so
+    the hash doesn't churn for them."""
+    day = as_of_day(as_of)
+    ts = _as_of_ts(day)
+    rules = []
+    if applied:
+        with _db() as con:
+            for row in con.execute(
+                    "SELECT spec_id, kind, norm, sample, count, last_seen_ts "
+                    "FROM events"):
+                days = max(0.0, (ts - row["last_seen_ts"]) / 86400.0)
+                raw = row["count"] * (0.5 ** (days / HALF_LIFE_DAYS))
+                if round(raw, 2) < AUTO_APPLY:
+                    continue
+                rules.append([row["spec_id"], row["kind"], row["norm"],
+                              row["sample"], round(raw, 3)])
+    rules.sort()
+    blob = json.dumps({"as_of": day.isoformat(), "rules": rules},
+                      sort_keys=True, ensure_ascii=False,
+                      separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()

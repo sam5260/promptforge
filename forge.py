@@ -760,10 +760,23 @@ def apply_constraints(prompt, constraints):
     return "\n".join(lines).rstrip("\n") + "\n", len(cons)
 
 
-def compile_prompt(text, spec_id=None, explicit=None, learned=True,
-                   mode="full", specs=None):
+def brain_meta(use_brain, as_of=None):
+    """provenance for an artifact: state hash + decay day. metadata only —
+    lives in reports/JSON/stderr, never inside the prompt body itself."""
+    import brain
+    return {"use_brain": bool(use_brain),
+            "as_of": brain.as_of_day(as_of).isoformat(),
+            "brain_hash": brain.payload_hash(as_of=as_of,
+                                             applied=bool(use_brain))}
+
+
+def compile_prompt(text, spec_id=None, explicit=None, *, use_brain,
+                   mode="full", specs=None, as_of=None):
     """context parse -> slot merge -> build -> brain apply;
-    no template match -> universal build (any field)"""
+    no template match -> universal build (any field).
+    use_brain: keyword-only, NO default — every caller must state it; a
+    missing value is a TypeError, not a silent fallback (chokepoint).
+    as_of: day-granular decay date (YYYY-MM-DD / date); default = today."""
     import brain
     from context_parser import parse, guess_field
     specs = specs if specs is not None else load_specs()
@@ -773,8 +786,8 @@ def compile_prompt(text, spec_id=None, explicit=None, learned=True,
     if chosen:
         spec = get_spec(specs, chosen)
         slots = {}
-        if learned:
-            slots.update(brain.slot_prefs(spec["id"]))
+        if use_brain:
+            slots.update(brain.slot_prefs(spec["id"], as_of=as_of))
         slots.update({k: v.get("value", "")
                       for k, v in ctx.get("slots", {}).items()})
         slots.update(explicit or {})
@@ -789,8 +802,8 @@ def compile_prompt(text, spec_id=None, explicit=None, learned=True,
         values.update(explicit or {})
     prompt = build(spec, values, mode)
     applied = {"suppressed": [], "added": [], "considered": 0}
-    if learned:
-        prompt, applied = brain.apply(spec["id"], prompt)
+    if use_brain:
+        prompt, applied = brain.apply(spec["id"], prompt, as_of=as_of)
     prompt, n_cons = apply_constraints(prompt, ctx.get("constraints"))
     score = judge(spec, prompt)["score"]
     nm = spec.get("name") or spec["id"]
@@ -802,7 +815,8 @@ def compile_prompt(text, spec_id=None, explicit=None, learned=True,
         "constraints": ctx["constraints"], "constraints_applied": n_cons,
         "facts": ctx["facts"],
         "learned": applied, "warnings": warnings, "mode": mode,
-        "learned_on": bool(learned),
+        "learned_on": bool(use_brain),
+        **brain_meta(use_brain, as_of),
     }
     return {"prompt": prompt, "values": values, "score": score, "report": report}
 
@@ -874,6 +888,10 @@ def main(argv=None):
                     help="fail if any required slot is empty/placeholder")
     sp.add_argument("--yes", action="store_true",
                     help="non-interactive: placeholders for missing slots")
+    sp.add_argument("--no-brain", action="store_true",
+                    help="ignore learned slot preferences (deterministic gen)")
+    sp.add_argument("--as-of", metavar="YYYY-MM-DD", default=None,
+                    help="decay date for brain hash/prefs (default: today)")
     sp.add_argument("--format", choices=["text", "json"], default="text")
 
     sp = sub.add_parser("check", help="score a prompt against a field's checklist")
@@ -931,8 +949,12 @@ def main(argv=None):
     sp.add_argument("--spec", help="force template id instead of auto-pick")
     sp.add_argument("-s", "--set", action="append", metavar="KEY=VALUE")
     sp.add_argument("--mode", choices=["full", "system", "task"], default="full")
-    sp.add_argument("--no-learned", action="store_true",
-                    help="ignore learned preferences for this compile")
+    sp.add_argument("--no-brain", "--no-learned", action="store_true",
+                    dest="no_brain",
+                    help="ignore learned brain state for this compile "
+                         "(fully deterministic; --no-learned kept as alias)")
+    sp.add_argument("--as-of", metavar="YYYY-MM-DD", default=None,
+                    help="decay date for brain apply/hash (default: today)")
     sp.add_argument("-o", "--out")
     sp.add_argument("--format", choices=["text", "json"], default="text")
 
@@ -1041,9 +1063,11 @@ def main(argv=None):
             text = read_file(args.file)
             provided = parse_set(getattr(args, "set", None))
             res = compile_prompt(text, spec_id=args.spec, explicit=provided,
-                                 learned=not args.no_learned, mode=args.mode,
-                                 specs=specs)
+                                 use_brain=not args.no_brain, mode=args.mode,
+                                 specs=specs, as_of=args.as_of)
             rep = res["report"]
+            print(f"brain: hash={rep['brain_hash']} as_of={rep['as_of']} "
+                  f"use_brain={rep['use_brain']}", file=sys.stderr)
             if fmt_json:
                 print(json.dumps({"field": rep["spec_id"],
                                   "score": res["score"], "prompt": res["prompt"],
@@ -1164,8 +1188,13 @@ def main(argv=None):
             return EXIT_OK
 
         if args.command == "gen":
+            import brain
             interactive = sys.stdin.isatty() and not args.yes
-            values, _ = slot_values(spec, provided, interactive=interactive,
+            slots = dict(provided)
+            if not args.no_brain:
+                slots = {**brain.slot_prefs(spec["id"], as_of=args.as_of),
+                         **slots}
+            values, _ = slot_values(spec, slots, interactive=interactive,
                                     assume_yes=args.yes)
             if args.strict:
                 bad = [s["name"] for s in spec.get("slots", [])
@@ -1177,8 +1206,11 @@ def main(argv=None):
                           file=sys.stderr)
                     return EXIT_INPUT
             prompt = build(spec, values, args.mode)
+            meta = brain_meta(not args.no_brain, args.as_of)
             if fmt_json:
-                print(json.dumps(gen_payload(spec, values, args.mode, prompt), indent=2))
+                payload = gen_payload(spec, values, args.mode, prompt)
+                payload.update(meta)
+                print(json.dumps(payload, indent=2))
                 if args.out:
                     Path(args.out).write_text(prompt, encoding="utf-8")
                     print(f"[+] wrote {args.out} ({len(prompt)} bytes)", file=sys.stderr)
@@ -1187,6 +1219,8 @@ def main(argv=None):
                 print(f"[+] wrote {args.out} ({len(prompt)} bytes)")
             else:
                 print(prompt)
+            print(f"brain: hash={meta['brain_hash']} as_of={meta['as_of']} "
+                  f"use_brain={meta['use_brain']}", file=sys.stderr)
             return EXIT_OK
 
         if args.command == "check":
