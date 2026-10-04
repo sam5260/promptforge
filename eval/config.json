@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "frozen": "2026-10-05",
+  "as_of": "2026-10-05",
+  "generator": {
+    "model": "claude-haiku-4-5-20251001",
+    "temperature": 0.7,
+    "runs_per_cell": 3,
+    "note": "cells = 11 eval tasks x 4 arms x 3 runs = 132 generations. dev tasks are excluded from generation and scoring."
+  },
+  "judge": {
+    "model": "claude-sonnet-5-5",
+    "temperature": 0,
+    "outputs_per_call": 1,
+    "arm_hidden": true,
+    "note": "132 judge calls (one per generation), absolute rubric scoring; pairwise win-rates derived per eval/rubric.md"
+  },
+  "arms": [
+    "raw",
+    "raw_prefix",
+    "forged_no_brain",
+    "forged_brain"
+  ],
+  "generic_prefix": "You are an expert assistant. Follow these best practices: answer the user's actual question directly; be clear and well structured (use headings and lists where they help, not for their own sake); state assumptions explicitly instead of hiding them; give concrete specifics rather than vague advice; do not invent requirements the user did not state; and check your response for completeness before returning it.",
+  "api_key_env": "PROMPTFORGE_EVAL_API_KEY",
+  "hashes": {
+    "spec_hash": "d04bc17f3114151d6290768f56d02bd396fcf7f6231af819a9a92f8f4b01089d",
+    "rubric_sha256": "62f01825dfe7b79a253b94a1eed6ee4cac00340c4b1bf7e1882f7676e267feb4",
+    "brain_snapshot": "eval/brain_snapshot.json",
+    "brain_snapshot_sha256": "146610a62118f5485af5fba902b709c9d5499c8ba6494785d5b40b861ba72d9a",
+    "tasks_sha256": "71c836c65025b8684dd8fef659c649391478c0115d3ee81d0b71fe4970f51b4f"
+  },
+  "human_review": {
+    "sample_rate": 0.2,
+    "reviewers": [
+      "chef",
+      "one other"
+    ],
+    "shuffle": true,
+    "timing": "after_automated_judging",
+    "reported": "side_by_side_with_judge"
+  },
+  "reconciliation_flags": [
+    "model_blocks: chef's freeze message carried two generator/judge pairs — (final) block claude-haiku-4-5-20251001 / claude-sonnet-5-5 selected over the gpt-6-sol / gpt-6-astra block because the (final) label and the ~132-call arithmetic match; one-word flip possible if chef meant the gpt pair.",
+    "task_set: three-edits task list (11 eval + 3 dev) selected over the later 'keep the smoke-tested tasks' line because the smoke chats were tuned against during defect discovery; dev-role tasks preserve them verbatim for reproducibility.",
+    "reconstruction: original 10-task table was lost; tasks 3-6 and 8 are reconstructions; positions 9-11 follow chef's list (vague, brand bait, code-review bait).",
+    "known_gap: task 11 expects field 'cyber.code', which is NOT among the frozen 9 specs — recorded verbatim as an unsatisfiable routing probe, excluded from the routing-accuracy aggregate."
+  ],
+  "no_tuning_during_sampling": true
+}

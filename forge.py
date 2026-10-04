@@ -219,12 +219,21 @@ def get_spec(specs: dict, field: str) -> dict:
 
 # ---------------------------------------------------------------- rendering
 
+_SLOT_REF = re.compile(r"\{([A-Za-z0-9_]+)\}")
+
+
 def render(template: str, values: dict, fill: str = "<{0}>") -> str:
-    return template.format_map(FillDict(values, fill))
+    """interpolate slots; drop whole sentences that interpolate an empty
+    slot — a dangling 'within this scope: .' is worse than no sentence.
+    keys absent from values keep the fill (fix/merge graft behavior)."""
+    kept = [part for part in re.split(r"(?<=\.) ", template)
+            if not any(values.get(m.group(1)) == ""
+                       for m in _SLOT_REF.finditer(part))]
+    return " ".join(kept).format_map(FillDict(values, fill))
 
 
 def slot_values(spec, provided, interactive=False, assume_yes=False,
-                missing_ok=False, fill_missing="…"):
+                missing_ok=False, fill_missing=""):
     values, missing = {}, []
     for slot in spec.get("slots", []):
         name = slot["name"]
@@ -241,7 +250,9 @@ def slot_values(spec, provided, interactive=False, assume_yes=False,
         if assume_yes or missing_ok:
             values[slot["name"]] = f"<{slot['name']}>" if assume_yes else fill_missing
             if missing_ok and not assume_yes:
-                warnings.append(f"slot '{slot['name']}' has no value — passed as '{fill_missing}'")
+                warnings.append(
+                    f"slot '{slot['name']}' has no value — "
+                    "omitted, listed under Unstated")
         elif interactive:
             hint = slot.get("hint", "")
             try:
@@ -261,37 +272,56 @@ def slot_values(spec, provided, interactive=False, assume_yes=False,
 def build(spec, values, mode="full", fill="<{0}>") -> str:
     out = [f"# {spec['name']} — generated prompt", ""]
     if mode in ("full", "system"):
-        out = ["# " + spec["name"] + " — generated prompt",
-               "", "## Role", render(spec["system"], values, fill).strip(), ""]
+        role = render(spec["system"], values, fill).strip()
+        if role:
+            out = ["# " + spec["name"] + " — generated prompt",
+                   "", "## Role", role, ""]
     if mode in ("full", "task"):
         context = [f"- **{s['name']}**: {values.get(s['name'], '')}"
                    for s in spec.get("slots", []) if values.get(s.get("name"))]
-        if context:
-            out += ["## Context", *context, ""]
-        out += ["## Task", render(spec["task"], values, fill).strip(), ""]
-        steps = spec.get("methodology", [])
-        if steps:
+        unstated = [s["name"] for s in spec.get("slots", [])
+                    if not values.get(s.get("name"))]
+        if context or unstated:
+            out += ["## Context", *context]
+            if unstated:
+                out.append(f"Unstated: {', '.join(unstated)}. Confirm before "
+                           "acting; assume only the target given above.")
+            out.append("")
+        task = render(spec["task"], values, fill).strip()
+        if task:
+            out += ["## Task", task, ""]
+        rendered = [s for s in (render(step, values, fill).strip()
+                                for step in spec.get("methodology", [])) if s]
+        if rendered:
             out += ["## Methodology"]
-            for i, step in enumerate(steps, 1):
-                out.append(f"{i}. {render(step, values, fill).strip()}")
+            out += [f"{i}. {s}" for i, s in enumerate(rendered, 1)]
             out.append("")
-        if spec.get("output"):
+        out_items = [i for i in (render(item, values, fill).strip()
+                                 for item in spec.get("output", [])) if i]
+        if out_items:
             out += ["## Output contract"]
-            out += [f"- {render(item, values, fill).strip()}" for item in spec["output"]]
+            out += [f"- {item}" for item in out_items]
             out.append("")
-        if spec.get("checklist"):
+        checks = []
+        for raw in spec.get("checklist", []):
+            if "|" in raw:
+                probe, item = raw.split("|", 1)
+                body = render(item.strip(), values, fill).strip()
+                line = f"- [ ] [{probe.strip()}] {body}" if body else ""
+            else:
+                body = render(raw.strip(), values, fill).strip()
+                line = f"- [ ] {body}" if body else ""
+            if line:
+                checks.append(line)
+        if checks:
             out += ["## Quality checklist (self-verify before delivering)"]
-            for raw in spec["checklist"]:
-                if "|" in raw:
-                    probe, item = raw.split("|", 1)
-                    line = f"- [ ] [{probe.strip()}] {render(item.strip(), values, fill)}"
-                else:
-                    line = f"- [ ] {render(raw.strip(), values, fill)}"
-                out.append(line)
+            out += checks
             out.append("")
-        if spec.get("negative"):
+        negatives = [i for i in (render(item, values, fill).strip()
+                                 for item in spec.get("negative", [])) if i]
+        if negatives:
             out += ["## Do not"]
-            out += [f"- {render(item, values, fill).strip()}" for item in spec["negative"]]
+            out += [f"- {item}" for item in negatives]
             out.append("")
     if mode == "system":
         out = out[:out.index("## Context")] if "## Context" in out else out

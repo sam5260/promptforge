@@ -1,0 +1,33 @@
+{
+  "format": "promptforge-brain-v1",
+  "exported": 1791142010,
+  "patterns": [
+    {
+      "id": 1,
+      "kind": "boilerplate_removed",
+      "spec_id": "cyber.web",
+      "sample": "5. Test business logic: race conditions on balance/quantity/state transitions, negative and boundary values, step skipping in multi-step flows.",
+      "count": 1,
+      "created_ts": 1791125525,
+      "last_seen_ts": 1791125525
+    },
+    {
+      "id": 2,
+      "kind": "constraint_added",
+      "spec_id": "cyber.web",
+      "sample": "- Always list the exact tool + version used for every check.",
+      "count": 1,
+      "created_ts": 1791125525,
+      "last_seen_ts": 1791125525
+    },
+    {
+      "id": 3,
+      "kind": "constraint_added",
+      "spec_id": "design",
+      "sample": "Always sign off with \"— festival design desk\".",
+      "count": 1,
+      "created_ts": 1791128179,
+      "last_seen_ts": 1791128179
+    }
+  ]
+}

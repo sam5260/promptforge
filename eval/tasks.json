@@ -1,0 +1,161 @@
+{
+  "schema": 1,
+  "frozen": "2026-10-05",
+  "note": "role=eval tasks are scored; role=dev tasks are the three smoke chats used during defect discovery and are EXCLUDED from all scoring (tuning on the test set). Reconstructed tasks (3,4,5,6,8) were rebuilt after the original 10-task table was lost; positions and expected fields are reconstructions, flagged in eval/config.json notes.",
+  "tasks": [
+    {
+      "id": 1,
+      "role": "eval",
+      "bucket": "cyber",
+      "labels": ["cyber", "pentest-plan"],
+      "text": "We're launching a Django app with a REST API next month and want a pentest plan first. Django REST Framework backend, Auth0 OAuth2 login, roles are org admin / member / read-only auditor. Main worry: broken object-level authorization and token handling. Where should testing start and what order?",
+      "expected_intent": "cyber.pentest plan",
+      "expected_field": "cyber.web",
+      "constraints": ["replacement for smoke chat1 (same spec, new text)"],
+      "reconstructed": false
+    },
+    {
+      "id": 2,
+      "role": "eval",
+      "bucket": "cyber",
+      "labels": ["cyber", "triage"],
+      "text": "One of our prod boxes is sending a slow steady trickle of outbound traffic to the same unfamiliar IP every night — a few KB per minute, never enough to trip the baseline alerts. Nothing shows in the usual netflow dashboards. How do I triage this?",
+      "expected_intent": "cyber triage",
+      "expected_field": "cyber.network",
+      "constraints": ["replacement for smoke chat2 (trickle-triage reframe)"],
+      "reconstructed": false
+    },
+    {
+      "id": 3,
+      "role": "eval",
+      "bucket": "cyber",
+      "labels": ["cyber", "ssrf"],
+      "text": "Our app has a URL-preview feature: paste any link, we fetch it server-side and render a screenshot. Users are starting to submit http://169.254.169.254 style addresses and I want to know how far this can go. What do I test?",
+      "expected_intent": "cyber.ssrftest",
+      "expected_field": "cyber.web",
+      "constraints": [],
+      "reconstructed": true
+    },
+    {
+      "id": 4,
+      "role": "eval",
+      "bucket": "cyber",
+      "labels": ["cyber", "code-review"],
+      "text": "Review this auth middleware and tell me what's wrong:\n\nfunction check(req, res, next) {\n  const token = req.headers.authorization?.split(' ')[1];\n  const user = jwt.decode(token);\n  if (!user) return res.status(401).end();\n  req.user = user;\n  next();\n}",
+      "expected_intent": "cyber.api review",
+      "expected_field": "cyber.api",
+      "constraints": [],
+      "reconstructed": true
+    },
+    {
+      "id": 5,
+      "role": "eval",
+      "bucket": "cyber",
+      "labels": ["cyber", "cloud"],
+      "text": "Review our AWS posture: a dozen accounts, IAM roles all over the place, some S3 buckets with public ACLs left over from an old project, and nobody remembers who has admin. Where do we start?",
+      "expected_intent": "cyber.cloud review",
+      "expected_field": "cyber.cloud",
+      "constraints": [],
+      "reconstructed": true
+    },
+    {
+      "id": 6,
+      "role": "eval",
+      "bucket": "design-other",
+      "labels": ["design", "landing-page"],
+      "text": "The hero section of my password manager's landing page reads 'Secure your digital life' — bland. Give me three sharper hero options and say what to change about the layout.",
+      "expected_intent": "design.ui/copy",
+      "expected_field": "general",
+      "constraints": ["no design spec exists in the frozen 9; general is the correct fallback"],
+      "reconstructed": true
+    },
+    {
+      "id": 7,
+      "role": "eval",
+      "bucket": "design-other",
+      "labels": ["data", "script"],
+      "text": "Got a CSV of ~50k contact rows with near-duplicates — same person as 'Jon Smith' / 'Jonathan Smith' / 'jon.smith@co' variants. Write me a Python script to fuzzy-dedupe it and print a merge report.",
+      "expected_intent": "data dedup script",
+      "expected_field": "general",
+      "constraints": ["replacement for smoke chat7"],
+      "reconstructed": false
+    },
+    {
+      "id": 8,
+      "role": "eval",
+      "bucket": "design-other",
+      "labels": ["aiml", "system-prompt"],
+      "text": "Write a system prompt for a customer-support bot for a SaaS billing tool. It has to handle refund requests within policy, stay calm when customers swear, and never invent engineering timelines or promise features.",
+      "expected_intent": "aiml.system prompt",
+      "expected_field": "aiml.llm",
+      "constraints": ["real routing row, not a bait"],
+      "reconstructed": true
+    },
+    {
+      "id": 9,
+      "role": "eval",
+      "bucket": "vague",
+      "labels": ["vague"],
+      "text": "improve my project",
+      "expected_intent": "unclear",
+      "expected_field": "general",
+      "constraints": [],
+      "reconstructed": false
+    },
+    {
+      "id": 10,
+      "role": "eval",
+      "bucket": "vague",
+      "labels": ["vague", "bait"],
+      "text": "Naming and brand concept for my new security consultancy — I want something that plays on 'attack surface'. Give me a name shortlist and a poster tagline.",
+      "expected_intent": "design.copy/branding",
+      "expected_field": "general",
+      "constraints": ["routing_probe: 'attack surface' should not drag a security request into a cyber spec"],
+      "reconstructed": false
+    },
+    {
+      "id": 11,
+      "role": "eval",
+      "bucket": "vague",
+      "labels": ["bait", "known-gap"],
+      "text": "Look at this function and tell me if it's safe to ship:\n\ndef export(user_id):\n    q = f\"SELECT * FROM users WHERE id = {user_id}\"\n    return db.execute(q).fetchone()",
+      "expected_intent": "code safety review",
+      "expected_field": "cyber.code",
+      "constraints": ["routing_probe", "known_spec_gap: cyber.code is NOT among the frozen 9 specs; unsatisfiable on purpose; EXCLUDE from the routing-accuracy aggregate and report separately"],
+      "reconstructed": false
+    },
+    {
+      "id": "dev1",
+      "role": "dev",
+      "bucket": "cyber",
+      "labels": ["smoke", "dev-only"],
+      "text": "I have a Flask payments app at https://staging.payflow.example. Session cookie auth, two roles: user and merchant. Management says do a security test before launch. Where do I even start? I'm worried about SQL injection and broken access control.",
+      "expected_intent": "cyber.pentest plan",
+      "expected_field": "cyber.web",
+      "constraints": ["dev only — excluded from all scoring"],
+      "reconstructed": false
+    },
+    {
+      "id": "dev2",
+      "role": "dev",
+      "bucket": "cyber",
+      "labels": ["smoke", "dev-only"],
+      "text": "Can you review this Python code? It's an API endpoint that looks up invoices:\n\n    @app.route('/api/invoice/<int:invoice_id>')\n    def get_invoice(invoice_id):\n        inv = db.execute(f'SELECT * FROM invoices WHERE id = {invoice_id}').fetchone()\n        return jsonify(inv)\n\nand there's also a download route:\n\n    @app.route('/download')\n    def download():\n        fname = request.args.get('file')\n        return send_from_directory(app.config['INVOICE_DIR'], fname)\n\nIs this safe? What would you change?",
+      "expected_intent": "cyber.api review",
+      "expected_field": "cyber.api",
+      "constraints": ["dev only — excluded from all scoring"],
+      "reconstructed": false
+    },
+    {
+      "id": "dev3",
+      "role": "dev",
+      "bucket": "design-other",
+      "labels": ["smoke", "dev-only", "general-fallback"],
+      "text": "I'm launching a small CLI tool that finds broken links in docs. Need a name and a hero section for the landing page. Nothing fancy, just make it look decent.",
+      "expected_intent": "design.ui/copy",
+      "expected_field": "general",
+      "constraints": ["dev only — excluded from all scoring; kept as the general-fallback worked example"],
+      "reconstructed": false
+    }
+  ]
+}

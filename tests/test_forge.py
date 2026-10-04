@@ -346,5 +346,62 @@ class TestRobustnessRegressions(unittest.TestCase):
         self.assertIn("bogus_key", r.stderr)
 
 
+class TestNoEmptyPlaceholders(unittest.TestCase):
+    """defect #1 (freeze precondition): compile never renders a bare '…';
+    empty slots are omitted from their lines and accounted for under one
+    explicit Unstated line — generic across every spec and slot"""
+
+    CHATS = [
+        "audit https://staging.example.com/login for sqli. "
+        "built on next.js. scope: test sqli only.",
+        "I have a Flask payments app at https://staging.payflow.example. "
+        "Session cookie auth, two roles: user and merchant. "
+        "Management says do a security test before launch. "
+        "Where do I even start? I'm worried about SQL injection and "
+        "broken access control.",
+        ("Can you review this Python code? It's an API endpoint that looks "
+         "up invoices: db.execute(f'SELECT * FROM invoices WHERE id = "
+         "{invoice_id}'). Is this safe?"),
+        "just chatting about lunch",
+        "hello",
+    ]
+
+    def _compile(self, text, **kw):
+        return forge.compile_prompt(text, use_brain=False, **kw)["prompt"]
+
+    def test_no_bare_ellipsis_in_any_compiled_prompt(self):
+        for chat in self.CHATS:
+            prompt = self._compile(chat)
+            self.assertNotIn("…", prompt, f"chat: {chat[:48]!r}")
+
+    def test_empty_required_slot_listed_under_unstated(self):
+        prompt = self._compile(self.CHATS[1])
+        self.assertIn("Unstated: ", prompt)
+        self.assertIn(
+            "Confirm before acting; assume only the target given above.",
+            prompt)
+
+    def test_unstated_names_come_from_spec_slots(self):
+        prompt = self._compile(self.CHATS[1])
+        line = next(l for l in prompt.splitlines()
+                    if l.startswith("Unstated: "))
+        names = line[len("Unstated: "):].split(". ")[0].split(", ")
+        slot_names = {s["name"]
+                      for s in forge.load_specs()["cyber.web"]["slots"]}
+        self.assertTrue(set(names) <= slot_names, names)
+        self.assertTrue(all(n.strip() for n in names), names)
+
+    def test_fully_specified_input_has_no_unstated_line(self):
+        prompt = forge.compile_prompt(
+            "audit https://app.example.com/login for sqli",
+            use_brain=False,
+            explicit={"target": "https://app.example.com",
+                      "stack": "django", "auth": "session",
+                      "scope": "login flow only",
+                      "role_model": "user/admin"})["prompt"]
+        self.assertNotIn("Unstated: ", prompt)
+        self.assertNotIn("…", prompt)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
