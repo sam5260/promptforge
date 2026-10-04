@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+brain.db
+brain.db-wal
+brain.db-shm
+.playwright-mcp/

@@ -4,6 +4,10 @@ promptforge — field-structured prompt generator, checker, and fixer.
 language: python 3.10+ | runtime: stdlib only | target: windows/linux terminal
 
 commands:
+  parse      read raw chat text -> template, slots, constraints (v2)
+  compile    context parser + learned prefs -> finished prompt (v2)
+  learn      diff generated vs corrected -> learn your patterns (v2)
+  brain      show/forget/reset/export what has been learned (v2)
   gen      build a field-specific prompt from slots
   check    structural score of any prompt against a field's checklist
   fix      patch gaps in your prompt (diff + before/after score)
@@ -642,6 +646,167 @@ def lint_specs(specs):
     return errors, warnings
 
 
+# ---------------------------------------------------------------- v2 pipeline
+
+def infer_spec_id(specs, text):
+    """match '# <spec name> — generated prompt' title line"""
+    first = (text or "").splitlines()
+    first = first[0] if first else ""
+    for sid, spec in specs.items():
+        name = spec.get("name", "")
+        if name and name in first:
+            return sid
+    return None
+
+
+def universal_spec(label="General", slug="general"):
+    """field-agnostic build used when no structure matches — any field works"""
+    if slug == "general":
+        system = ("You are a senior multi-disciplinary practitioner. You work "
+                  "from the stated requirements only: you state assumptions "
+                  "instead of inventing requirements, deliver exactly what was "
+                  "asked with no filler, and verify your own output against "
+                  "the request before returning it.")
+    else:
+        system = (f"You are a senior {label} specialist. You work from the "
+                  "stated requirements only: you state assumptions instead of "
+                  "inventing requirements, deliver exactly what was asked "
+                  "with no filler, and verify your own output against the "
+                  "request before returning it.")
+    return {
+        "id": slug,
+        "name": f"{label} Prompt",
+        "domain": "general",
+        "summary": "field-agnostic build used when no structure matches",
+        "spec_version": "2.0",
+        "last_reviewed": "2026-10-04",
+        "slots": [{"name": "request", "required": True,
+                   "hint": "the original request"}],
+        "system": system,
+        "task": ("Complete the request below. Treat it as the full "
+                 "specification: deliver exactly what it asks, in the format "
+                 "it implies, at the length it implies.\n\n{request}"),
+        "methodology": [
+            "Restate the goal, constraints, and required format in one pass "
+            "before producing anything.",
+            "If the request is ambiguous in a way that changes the outcome, "
+            "ask the fewest questions needed; otherwise state assumptions and "
+            "proceed.",
+            "Produce the deliverable directly — no preamble, no "
+            "meta-commentary, no summaries of your own process.",
+            "Self-review: check every requirement in the request against "
+            "your output and fix gaps before returning.",
+        ],
+        "output": [
+            "the deliverable matches every requirement of the original "
+            "request — format, length, scope",
+            "assumptions (if any) are stated explicitly with the deliverable",
+            "nothing outside the requested scope is added",
+        ],
+        "checklist": [
+            "request|every requirement from the original request is addressed",
+            "assumptions|assumptions are stated, not hidden",
+            "scope|nothing outside the requested scope is added",
+            "format|the output follows the format the request implies",
+        ],
+        "negative": [
+            "Do not ask for permission to start when the request is clear",
+            "Do not pad the response with summaries of what you are about "
+            "to do",
+        ],
+    }
+
+
+def apply_constraints(prompt, constraints):
+    """append parsed rules under a Constraints section — explicit text always
+    wins over learned edits; returns (prompt, n_applied)"""
+    cons, seen = [], set()
+    for c in constraints or []:
+        t = (c.get("text") or "").strip()
+        if not t:
+            continue
+        key = t.lower().rstrip(".!?")
+        if key in seen:
+            continue
+        seen.add(key)
+        if t.lower() in prompt.lower():
+            continue
+        cons.append(t)
+    if not cons:
+        return prompt, 0
+    lines = prompt.rstrip("\n").split("\n")
+    heading = "## Constraints (from your request)"
+    bullets = [f"- {t}" for t in cons]
+
+    def insert_before(marker):
+        for i, l in enumerate(lines):
+            if l.strip() == marker:
+                lines[i:i] = [heading, ""] + bullets + [""]
+                return True
+        return False
+
+    existing = next((i for i, l in enumerate(lines) if l.strip() == heading),
+                    None)
+    if existing is None:
+        if not insert_before(
+                "## Quality checklist (self-verify before delivering)") \
+                and not insert_before("## Do not"):
+            lines += ["", heading] + bullets
+    else:
+        end = existing + 1
+        while end < len(lines) and not lines[end].startswith("## "):
+            end += 1
+        lines[end:end] = bullets
+    return "\n".join(lines).rstrip("\n") + "\n", len(cons)
+
+
+def compile_prompt(text, spec_id=None, explicit=None, learned=True,
+                   mode="full", specs=None):
+    """context parse -> slot merge -> build -> brain apply;
+    no template match -> universal build (any field)"""
+    import brain
+    from context_parser import parse, guess_field
+    specs = specs if specs is not None else load_specs()
+    ctx = parse(text, specs=specs, spec_id=spec_id)
+    chosen = spec_id or ctx["spec_id"]
+    warnings = []
+    if chosen:
+        spec = get_spec(specs, chosen)
+        slots = {}
+        if learned:
+            slots.update(brain.slot_prefs(spec["id"]))
+        slots.update({k: v.get("value", "")
+                      for k, v in ctx.get("slots", {}).items()})
+        slots.update(explicit or {})
+        values, warnings = slot_values(spec, slots, missing_ok=True)
+    else:
+        slug, label = guess_field(text)
+        spec = universal_spec(label, slug)
+        request = " ".join((text or "").split())
+        if len(request) > 1400:
+            request = request[:1400].rstrip() + " …"
+        values = {"request": request}
+        values.update(explicit or {})
+    prompt = build(spec, values, mode)
+    applied = {"suppressed": [], "added": [], "considered": 0}
+    if learned:
+        prompt, applied = brain.apply(spec["id"], prompt)
+    prompt, n_cons = apply_constraints(prompt, ctx.get("constraints"))
+    score = judge(spec, prompt)["score"]
+    nm = spec.get("name") or spec["id"]
+    label = nm[:-7] if nm.endswith(" Prompt") else nm
+    report = {
+        "spec_id": spec["id"], "field": label,
+        "confidence": ctx["confidence"],
+        "candidates": ctx["candidates"], "inferred": ctx["slots"],
+        "constraints": ctx["constraints"], "constraints_applied": n_cons,
+        "facts": ctx["facts"],
+        "learned": applied, "warnings": warnings, "mode": mode,
+        "learned_on": bool(learned),
+    }
+    return {"prompt": prompt, "values": values, "score": score, "report": report}
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_list(specs, domain=None):
@@ -756,6 +921,36 @@ def main(argv=None):
     sp.add_argument("domain", choices=["cyber", "aiml"])
     sp.add_argument("field_id")
 
+    sp = sub.add_parser("parse", help="read raw chat text: template, slots, constraints")
+    sp.add_argument("file", help="chat text file, or - for stdin")
+    sp.add_argument("--spec", help="force template id instead of auto-pick")
+    sp.add_argument("--format", choices=["text", "json"], default="text")
+
+    sp = sub.add_parser("compile", help="parse text -> finished prompt with learned prefs")
+    sp.add_argument("file", help="chat text file, or - for stdin")
+    sp.add_argument("--spec", help="force template id instead of auto-pick")
+    sp.add_argument("-s", "--set", action="append", metavar="KEY=VALUE")
+    sp.add_argument("--mode", choices=["full", "system", "task"], default="full")
+    sp.add_argument("--no-learned", action="store_true",
+                    help="ignore learned preferences for this compile")
+    sp.add_argument("-o", "--out")
+    sp.add_argument("--format", choices=["text", "json"], default="text")
+
+    sp = sub.add_parser("learn", help="diff generated vs corrected prompt and learn")
+    sp.add_argument("generated", help="what PromptForge produced")
+    sp.add_argument("corrected", help="your edited version")
+    sp.add_argument("--spec", help="template id (auto-inferred from title if omitted)")
+    sp.add_argument("--format", choices=["text", "json"], default="text")
+
+    sp = sub.add_parser("brain", help="show/forget/reset/export learned patterns")
+    sp.add_argument("action", nargs="?", default="show",
+                    choices=["show", "status", "forget", "reset", "export"])
+    sp.add_argument("pattern_id", nargs="?", help="pattern id (for forget)")
+    sp.add_argument("--spec", help="filter by template id")
+    sp.add_argument("--yes", action="store_true", help="confirm reset")
+    sp.add_argument("-o", "--out", help="export target file")
+    sp.add_argument("--format", choices=["text", "json"], default="text")
+
     args = p.parse_args(argv)
     fmt_json = getattr(args, "format", "text") == "json"
 
@@ -809,6 +1004,151 @@ def main(argv=None):
 
         if args.command == "list":
             cmd_list(specs, args.domain)
+            return EXIT_OK
+
+        if args.command == "parse":
+            import context_parser
+            ctx = context_parser.parse(read_file(args.file), specs=specs,
+                                       spec_id=args.spec)
+            if fmt_json:
+                print(json.dumps(ctx, indent=2, ensure_ascii=False))
+                return EXIT_OK
+            print(f"parse: {ctx['chars']} chars")
+            if ctx["spec_id"]:
+                print(f"template: {ctx['spec_id']}  "
+                      f"(confidence {ctx['confidence']})")
+            else:
+                print(f"template: none detected — field: {ctx['field']} "
+                      f"(universal build)")
+            if ctx["candidates"]:
+                print("candidates: " + ", ".join(
+                    f"{c['id']} ({c['score']})" for c in ctx["candidates"]))
+            if ctx["slots"]:
+                print("slots detected:")
+                for name, s in ctx["slots"].items():
+                    print(f"  {name:<16} = {s['value']}  [{s['how']}]")
+            if ctx["constraints"]:
+                neg = sum(1 for c in ctx["constraints"]
+                          if c["polarity"] == "negative")
+                print(f"constraints: {len(ctx['constraints'])} "
+                      f"({neg} negative)")
+            if ctx["facts"]:
+                print("facts: " + ", ".join(
+                    f"{f['kind']}={f['value']}" for f in ctx["facts"]))
+            return EXIT_OK
+
+        if args.command == "compile":
+            text = read_file(args.file)
+            provided = parse_set(getattr(args, "set", None))
+            res = compile_prompt(text, spec_id=args.spec, explicit=provided,
+                                 learned=not args.no_learned, mode=args.mode,
+                                 specs=specs)
+            rep = res["report"]
+            if fmt_json:
+                print(json.dumps({"field": rep["spec_id"],
+                                  "score": res["score"], "prompt": res["prompt"],
+                                  "values": res["values"], "report": rep},
+                                 indent=2, ensure_ascii=False))
+            else:
+                print(f"compile: {rep['spec_id']} · {rep['field']}  "
+                      f"(confidence {rep['confidence']})")
+                print(f"score: {res['score']}%  "
+                      f"[structural — verify against a real model output]")
+                for name, s in rep["inferred"].items():
+                    print(f"  inferred {name} = {s['value']}  [{s['how']}]")
+                for c in rep["constraints"][:5]:
+                    print(f"  {c['polarity']:<9} {c['text'][:70]}")
+                for line in rep["learned"]["suppressed"]:
+                    print(f"  [learned] suppressed: {line[:70]}")
+                for line in rep["learned"]["added"]:
+                    print(f"  [learned] added: {line[:70]}")
+                for w in rep["warnings"]:
+                    print(f"[warn] {w}")
+            if args.out:
+                Path(args.out).write_text(res["prompt"], encoding="utf-8")
+                print(f"[+] wrote {args.out} ({len(res['prompt'])} bytes)")
+            elif not fmt_json:
+                print("\n--- prompt ---")
+                print(res["prompt"])
+            return EXIT_OK
+
+        if args.command == "learn":
+            import brain
+            generated = read_file(args.generated)
+            corrected = read_file(args.corrected)
+            sid = args.spec or infer_spec_id(specs, generated)
+            if not sid:
+                raise KeyError("couldn't infer the template from the title line "
+                               "— pass --spec <id>")
+            get_spec(specs, sid)
+            summary = brain.learn_from_diff(sid, generated, corrected)
+            if fmt_json:
+                print(json.dumps(summary, indent=2, ensure_ascii=False))
+            else:
+                if not summary["learned"]:
+                    print("brain: nothing learned — no meaningful changes detected")
+                for item in summary["learned"]:
+                    label = {"boilerplate_removed": "you removed (will suppress)",
+                             "constraint_added": "you added (will apply)",
+                             "slot_override": "you changed (preference)"}[item["kind"]]
+                    print(f"  {label}: {item['sample'][:90]}")
+                if summary["ignored"]:
+                    print(f"  ignored {summary['ignored']} unrelated change(s)")
+                print(f"brain: {len(summary['learned'])} pattern(s) recorded "
+                      f"for {sid} — status: forge brain")
+            return EXIT_OK
+
+        if args.command == "brain":
+            import brain
+            if args.action == "reset":
+                if not args.yes:
+                    print("[!] reset deletes every learned pattern — "
+                          "confirm with --yes", file=sys.stderr)
+                    return EXIT_INPUT
+                n = brain.reset()
+                print(f"[+] brain reset — {n} pattern(s) deleted")
+                return EXIT_OK
+            if args.action == "forget":
+                if not args.pattern_id:
+                    print("[!] forget needs a pattern id: forge brain show",
+                          file=sys.stderr)
+                    return EXIT_INPUT
+                n = brain.forget(args.pattern_id)
+                if not n:
+                    raise KeyError(f"no pattern with id {args.pattern_id}")
+                print(f"[+] forgot pattern {args.pattern_id}")
+                return EXIT_OK
+            if args.action == "export":
+                data = brain.export_json()
+                if args.out:
+                    Path(args.out).write_text(data, encoding="utf-8")
+                    print(f"[+] exported {args.out} "
+                          f"({len(data)} bytes)")
+                else:
+                    print(data)
+                return EXIT_OK
+            st = brain.status()
+            patterns = brain.suggest(args.spec)
+            if fmt_json:
+                print(json.dumps({"status": st, "patterns": patterns},
+                                 indent=2, ensure_ascii=False))
+                return EXIT_OK
+            print(f"brain: {st['patterns']} pattern(s), "
+                  f"{st['auto_active']} auto-applying "
+                  f"(threshold {st['auto_threshold']}, "
+                  f"half-life {st['half_life_days']}d)")
+            if st["by_kind"]:
+                for kind, info in sorted(st["by_kind"].items()):
+                    print(f"  {kind:<22} {info['patterns']} patterns, "
+                          f"{info['hits']} events")
+            if not patterns:
+                print("  (nothing learned yet — edit a compiled prompt and "
+                      "run: forge learn generated.txt corrected.txt)")
+                return EXIT_OK
+            print(f"{'id':<5} {'status':<9} {'x':<4} {'kind':<21} sample")
+            for p in patterns:
+                print(f"{p['id']:<5} {p['status']:<9} {p['count']:<4} "
+                      f"{p['kind']:<21} {p['sample'][:64]}")
             return EXIT_OK
 
         spec = get_spec(specs, args.field)

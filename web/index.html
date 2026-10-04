@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PromptForge</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#2d3646;
+  --fg:#e6edf3; --dim:#8b98a9; --acc:#4da3ff; --ok:#3fb950; --bad:#f85149;
+  --warn:#d29922; --mono:Consolas,"Cascadia Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+     font:14px/1.5 "Segoe UI",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:12px 20px;
+  background:var(--panel);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:5}
+header h1{font-size:18px;margin:0;letter-spacing:.5px}
+header h1 span{color:var(--acc)}
+.badge{font:11px var(--mono);color:var(--dim);border:1px solid var(--line);
+  border-radius:99px;padding:2px 10px}
+.badge.hot{border-color:var(--acc);color:var(--acc)}
+#layout{display:flex;min-height:calc(100vh - 54px)}
+nav{width:200px;flex:none;background:var(--panel);border-right:1px solid var(--line);
+  padding:14px 8px}
+nav button{display:block;width:100%;text-align:left;background:none;border:0;
+  color:var(--dim);font:14px inherit;padding:9px 14px;border-radius:8px;
+  cursor:pointer;margin-bottom:2px}
+nav button:hover{background:var(--panel2);color:var(--fg)}
+nav button.on{background:var(--panel2);color:var(--acc);font-weight:600}
+nav .navhint{font-size:11px;color:var(--dim);padding:8px 14px 0;
+  border-top:1px solid var(--line);margin-top:10px;line-height:1.5}
+main{flex:1;padding:22px 26px;max-width:1080px}
+.view{display:none}.view.on{display:block}
+h2{font-size:16px;margin:0 0 4px}
+.sub{color:var(--dim);margin:0 0 18px;font-size:13px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:16px 18px;margin-bottom:16px}
+.card.step{border-left:3px solid var(--acc)}
+.card.dim{opacity:.75}
+label.f{display:block;font-size:12px;color:var(--dim);margin:12px 0 4px}
+select,input[type=text],input[type=number],textarea{
+  width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;font:13px var(--mono);outline:none}
+select:focus,input:focus,textarea:focus{border-color:var(--acc)}
+textarea{min-height:170px;resize:vertical;line-height:1.45}
+textarea.big{min-height:210px;font-size:14px}
+.row{display:flex;gap:14px;flex-wrap:wrap}
+.row>*{flex:1;min-width:260px}
+button.btn{background:var(--acc);color:#04121f;border:0;border-radius:8px;
+  padding:9px 18px;font:600 13px inherit;cursor:pointer}
+button.btn:hover{filter:brightness(1.12)}
+button.btn:disabled{opacity:.45;cursor:wait}
+button.ghost{background:none;border:1px solid var(--line);color:var(--fg)}
+button.ghost:hover{border-color:var(--acc);color:var(--acc);filter:none}
+button.danger{background:none;border:1px solid var(--bad);color:var(--bad)}
+button.danger:hover{filter:brightness(1.25)}
+.actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.score{display:flex;align-items:baseline;gap:14px;margin:6px 0 4px;flex-wrap:wrap}
+.score .pct{font:700 40px var(--mono)}
+.score .pct.g{color:var(--ok)}.score .pct.y{color:var(--warn)}.score .pct.r{color:var(--bad)}
+.score .frac{color:var(--dim);font:14px var(--mono)}
+.score .note{color:var(--dim);font-size:12px;font-style:italic}
+table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px}
+th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;
+  vertical-align:top}
+th{color:var(--dim);font-weight:600;font-size:12px}
+td.mono,.mono{font-family:var(--mono)}
+.pass{color:var(--ok);font-weight:700}
+.fail{color:var(--bad);font-weight:700}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.chip{font:12px var(--mono);border:1px solid var(--line);border-radius:99px;
+  padding:3px 12px;color:var(--dim);display:inline-flex;align-items:center;gap:6px}
+.chip.ok{border-color:var(--ok);color:var(--ok)}
+.chip.no{border-color:var(--bad);color:var(--bad)}
+.chip.pos{border-color:var(--ok);color:var(--ok)}
+.chip.neg{border-color:var(--warn);color:var(--warn)}
+.chip button{background:none;border:0;color:inherit;cursor:pointer;
+  font:700 13px var(--mono);padding:0 2px}
+.chip.learned{border-color:var(--acc);color:var(--acc)}
+.chip.fact{border-style:dashed}
+pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  padding:13px 15px;overflow:auto;font:12.5px/1.5 var(--mono);white-space:pre-wrap;
+  word-break:break-word;max-height:520px;margin:8px 0}
+pre.diff .d{color:var(--ok)}pre.diff .h{color:var(--acc)}
+pre.diff .x{color:var(--bad)}
+.outbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.outbar .path{flex:1;min-width:190px;font:12.5px var(--mono);background:var(--panel2);
+  color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.grow{flex:1}
+.warn{color:var(--warn);font-size:13px;margin:6px 0}
+.err{color:var(--bad);font-size:13px;margin:6px 0;font-family:var(--mono)}
+.muted{color:var(--dim);font-size:12.5px}
+.log{font:12.5px/1.7 var(--mono);color:var(--dim)}
+.log b{color:var(--fg)}
+.cand{border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+  margin-bottom:12px;background:var(--panel)}
+.cand.best{border-color:var(--ok)}
+.cand .top{display:flex;gap:12px;align-items:center;margin-bottom:6px}
+.cand .rank{font:700 14px var(--mono);color:var(--acc)}
+.cand .sc{font:700 20px var(--mono)}
+#libTable tr{cursor:pointer}
+#libTable tr:hover td{background:var(--panel2)}
+.detail td{background:var(--panel2);color:var(--dim);font-size:13px}
+#toast{position:fixed;bottom:22px;right:22px;z-index:50;display:flex;
+  flex-direction:column;gap:8px;max-width:420px}
+.toast{background:var(--panel2);border:1px solid var(--line);border-left:3px solid
+  var(--acc);border-radius:8px;padding:10px 14px;font:13px var(--mono);
+  box-shadow:0 6px 24px #0009;animation:in .18s ease}
+.toast.bad{border-left-color:var(--bad);color:#ffb3ae}
+.toast.good{border-left-color:var(--ok)}
+@keyframes in{from{transform:translateX(30px);opacity:0}}
+.consent{border-left:3px solid var(--acc);background:var(--panel2);border-radius:8px;
+  padding:9px 13px;margin-bottom:14px;font-size:13px;color:var(--dim);
+  display:none;animation:in .18s ease}
+.consent.on{display:block}
+.consent b{color:var(--fg)}
+.q{display:inline-flex;align-items:center;justify-content:center;width:15px;
+  height:15px;border:1px solid var(--line);border-radius:50%;font:700 10px var(--mono);
+  color:var(--dim);cursor:help;vertical-align:middle;margin-left:5px}
+.stat{display:flex;gap:10px;align-items:center;font:14px var(--mono);
+  flex-wrap:wrap;margin-bottom:6px}
+.stat .m{font-size:26px;font-weight:700;color:var(--ok)}
+.stat .k{color:var(--dim)}
+.empty{border:1px dashed var(--line);border-radius:10px;padding:26px 18px;
+  text-align:center;color:var(--dim);font-size:13px}
+.empty b{color:var(--fg);display:block;margin-bottom:6px;font-size:14px}
+footer{color:var(--dim);font-size:11.5px;padding:16px 26px;border-top:1px solid
+  var(--line);text-align:center}
+.tabrow{display:flex;gap:6px;margin-bottom:12px}
+.tabrow button{background:var(--panel2);border:1px solid var(--line);
+  color:var(--dim);border-radius:8px;padding:7px 16px;font:600 13px inherit;
+  cursor:pointer}
+.tabrow button.on{border-color:var(--acc);color:var(--acc)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Prompt<span>Forge</span></h1>
+  <span class="badge">offline · local · ₹0 · learns from your edits</span>
+  <span class="badge hot" id="brainPill" title="patterns learned from your edits"
+    style="display:none"></span>
+</header>
+
+<div id="layout">
+<nav id="nav">
+  <button data-v="write" class="on">Write</button>
+  <button data-v="score">Score</button>
+  <button data-v="improve">Improve</button>
+  <button data-v="compare">Compare &amp; Combine</button>
+  <button data-v="variants">Variants</button>
+  <button data-v="library">Library</button>
+  <button data-v="brain">Brain</button>
+  <div class="navhint">Paste your chat → check what we understood →
+  get a structured prompt. Everything runs on this machine.</div>
+</nav>
+
+<main>
+<!-- =============================== WRITE ============================== -->
+<section id="v-write" class="view on">
+  <h2>Write</h2>
+  <p class="sub">Read → analyse → build. Paste what you want, we work out the
+    field, and build a clean prompt — any field, nothing to configure.<span class="q" title="The engine never calls a model. It reads your text, works out the field, and builds a structured prompt with fixed rules — same input, same output, every time.">?</span></p>
+
+  <div class="card step">
+    <label class="f">1 · your chat / request</label>
+    <textarea id="wzText" class="big"
+      placeholder="paste what you told the model — e.g.&#10;&#10;can you audit the login flow at https://staging.example.com/app/login ?&#10;built on next.js + postgres. auth is jwt.&#10;scope: test SQLi only, don't touch /billing&#10;always give me a findings table."></textarea>
+    <div class="consent" id="wzDup">
+      <b>Looks like 2 prompts in there.</b> Want to
+      <a href="#" data-goto="compare" data-mode="compare">compare them</a> or
+      <a href="#" data-goto="compare" data-mode="combine">combine them</a> instead?
+      <span class="grow"></span>
+      <button class="ghost btn" id="wzDupX" style="padding:2px 9px">✕</button>
+    </div>
+    <div class="actions">
+      <button class="btn" id="wzRead">Read my chat →</button>
+      <button class="ghost btn" onclick="loadFileInto('#wzText')">load file…</button>
+      <span class="muted">nothing leaves this machine</span>
+    </div>
+  </div>
+
+  <div class="card step" id="wzStep2" style="display:none">
+    <label class="f">2 · field analysis</label>
+    <div id="wzField" style="font-weight:700;font-size:15px;margin:2px 0 4px"></div>
+    <div id="wzUnderstood"></div>
+    <div class="actions">
+      <button class="btn" id="wzBuild">Build my prompt →</button>
+      <span class="muted">no settings to pick — if something's off, edit step 1</span>
+    </div>
+  </div>
+
+  <div class="card step" id="wzStep3" style="display:none">
+    <label class="f">3 · your prompt</label>
+    <div class="score" id="wzScore"></div>
+    <div class="chips" id="wzLearnedChips"></div>
+    <pre id="wzPrompt"></pre>
+    <div id="wzWarn"></div>
+    <div class="outbar">
+      <button class="btn ghost" data-copy="#wzPrompt">Copy prompt</button>
+      <button class="ghost btn" data-dl="#wzPrompt" data-name="">Download</button>
+      <input class="path" id="wzPath" placeholder="save inside project… e.g. prompts\my.txt">
+      <button class="btn ghost" id="wzSave">Save to project</button>
+      <span class="grow"></span>
+      <button class="ghost btn" id="wzToScore">Score it</button>
+      <button class="ghost btn" id="wzToImprove">Improve it</button>
+      <button class="ghost btn" id="wzToVariants">Try variants</button>
+      <button class="btn" id="wzTeachBtn">Teach it</button>
+    </div>
+    <div id="wzTeach" style="display:none">
+      <label class="f">your corrected version — delete lines you don't want,
+        add rules you always want, fix any slot values<span class="q"
+        title="PromptForge diffs your edit against the generated prompt. Lines you delete become 'stop repeating' patterns, rules you add become 'new rule' patterns, slot changes become 'slot preferences'. Nothing is guessed.">?</span></label>
+      <textarea id="wzTeachText" style="min-height:170px"
+        placeholder="paste the version you'd actually send"></textarea>
+      <div class="actions">
+        <button class="btn" id="wzTeachRun">Teach this edit</button>
+        <span class="muted">teaching is manual — nothing is learned until you press this</span>
+      </div>
+      <div id="wzTeachOut"></div>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== SCORE ============================== -->
+<section id="v-score" class="view">
+  <h2>Score</h2>
+  <p class="sub">Check a prompt against the field's structural checklist —
+    what's present, what's missing. Scores are structural<span class="q"
+    title="Structure only: does the prompt HAVE a role, task, method, output contract, checks. Not a judgment of how well it will perform on a model.">?</span>,
+    not model output.</p>
+  <div class="card">
+    <label class="f">prompt text</label>
+    <textarea id="scText" placeholder="paste a prompt"></textarea>
+    <div class="actions"><button class="btn" id="scRun">Score it</button></div>
+    <div id="scErr"></div>
+  </div>
+  <div class="card" id="scOut" style="display:none">
+    <div class="score" id="scScore"></div>
+    <div class="chips" id="scChips"></div>
+    <table id="scTable">
+      <thead><tr><th style="width:170px">probe</th><th>verdict</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="actions">
+      <button class="ghost btn" id="scToImprove">Improve this prompt</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== IMPROVE ============================= -->
+<section id="v-improve" class="view">
+  <h2>Improve</h2>
+  <p class="sub">Graft missing structure into your prompt while keeping your
+    wording. Shows exactly what changed.</p>
+  <div class="card">
+    <label class="f">prompt text</label>
+    <textarea id="imText" placeholder="paste a prompt with gaps"></textarea>
+    <div class="actions"><button class="btn" id="imRun">Improve it</button></div>
+    <div id="imErr"></div>
+  </div>
+  <div class="card" id="imOut" style="display:none">
+    <div class="score" id="imScore"></div>
+    <div id="imReport"></div>
+    <label class="f">what changed</label>
+    <pre class="diff" id="imDiff"></pre>
+    <label class="f">improved prompt</label>
+    <pre id="imText2"></pre>
+    <div class="outbar">
+      <button class="btn ghost" data-copy="#imText2">Copy prompt</button>
+      <button class="ghost btn" data-dl="#imText2" data-name="improved.txt">Download</button>
+      <input class="path" id="imPath" placeholder="save inside project… e.g. prompts\improved.txt">
+      <button class="btn ghost" id="imSave">Save to project</button>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== COMPARE & COMBINE ========================== -->
+<section id="v-compare" class="view">
+  <h2>Compare &amp; Combine</h2>
+  <p class="sub">Two prompts, one job: see which scores better, or fuse them
+    into one that keeps both strengths.</p>
+  <div class="card">
+    <div class="tabrow">
+      <button data-cm="compare" class="on">Compare — which is better?</button>
+      <button data-cm="combine">Combine — merge into one</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <div>
+        <label class="f">prompt A</label>
+        <textarea id="cpA" style="min-height:150px"></textarea>
+      </div>
+      <div>
+        <label class="f">prompt B</label>
+        <textarea id="cpB" style="min-height:150px"></textarea>
+      </div>
+    </div>
+    <div class="actions"><button class="btn" id="cpRun">Compare</button></div>
+    <div id="cpErr"></div>
+  </div>
+  <div class="card" id="cpOut" style="display:none">
+    <div id="cpCompareOut">
+      <div class="score" id="cpScore"></div>
+      <div class="chips" id="cpChips"></div>
+      <table id="cpTable">
+        <thead><tr><th style="width:60px">A</th><th style="width:60px">B</th>
+          <th style="width:170px">probe</th><th>edge</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="muted" id="cpWinner" style="margin-top:8px"></div>
+      <div class="actions">
+        <button class="ghost btn" id="cpToCombine">Combine them instead</button>
+      </div>
+    </div>
+    <div id="cpCombineOut" style="display:none">
+      <div class="stat" id="cpStat"></div>
+      <div class="muted" id="cpMeta" style="margin:6px 0"></div>
+      <div id="cpWarn"></div>
+      <label class="f">combined prompt</label>
+      <pre id="cpText"></pre>
+      <div class="outbar">
+        <button class="btn ghost" data-copy="#cpText">Copy prompt</button>
+        <button class="ghost btn" data-dl="#cpText" data-name="combined.txt">Download</button>
+        <input class="path" id="cpPath" placeholder="save inside project… e.g. prompts\combined.txt">
+        <button class="btn ghost" id="cpSave">Save to project</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== VARIANTS =========================== -->
+<section id="v-variants" class="view">
+  <h2>Variants</h2>
+  <p class="sub">Generate a batch of mutated candidates, score each, keep the
+    best. Deterministic with a seed<span class="q"
+    title="Same seed + same input = same candidates, every run. Leave blank for random.">?</span>.</p>
+  <div class="card">
+    <label class="f">base prompt</label>
+    <textarea id="vzText" placeholder="paste the prompt to improve"></textarea>
+    <div class="row" style="margin-top:6px">
+      <div><label class="f">how many tries</label>
+        <input type="number" id="vzAtt" value="12" min="1"></div>
+      <div><label class="f">seed (blank = random)</label>
+        <input type="text" id="vzSeed" placeholder="e.g. 42"></div>
+      <div><label class="f">keep top</label>
+        <input type="number" id="vzTopN" value="3" min="1"></div>
+    </div>
+    <div class="actions"><button class="btn" id="vzRun">Make variants</button></div>
+    <div id="vzErr"></div>
+  </div>
+  <div class="card" id="vzOut" style="display:none">
+    <label class="f">search log</label>
+    <div class="log" id="vzLog"></div>
+    <label class="f">best candidates</label>
+    <div id="vzTop"></div>
+  </div>
+</section>
+
+<!-- ============================== LIBRARY ============================ -->
+<section id="v-library" class="view">
+  <h2>Library</h2>
+  <p class="sub">The structure library PromptForge ships with. Click a row for
+    details. Health check validates every structure.</p>
+  <div class="card">
+    <div class="actions" style="margin-top:0">
+      <button class="ghost btn" id="libHealth">Check library health</button>
+      <span class="badge" id="libBadge">not checked yet</span>
+    </div>
+    <div id="libHealthOut"></div>
+    <table id="libTable">
+      <thead><tr><th>structure</th>
+        <th style="width:130px">area</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- =============================== BRAIN ============================= -->
+<section id="v-brain" class="view">
+  <h2>Brain</h2>
+  <p class="sub">What PromptForge learned from your edits. Everything here is
+    local, inspectable, and deletable — the model never sees it.</p>
+  <div class="card">
+    <div class="stat" id="brStats"></div>
+    <div class="muted" style="margin-bottom:8px">auto-applies at weight ≥
+      <b id="brThresh">3</b> (3 consistent edits, 30-day half-life<span class="q"
+      title="Older edits count for less: a pattern last seen 30 days ago weighs half as much. Consistency keeps weight high; one-offs fade.">?</span>).
+      Lighter patterns wait here until you teach them again.</div>
+    <div class="actions" style="margin-top:0">
+      <button class="ghost btn" id="brRefresh">Refresh</button>
+      <button class="ghost btn" id="brExport">Export JSON</button>
+      <span class="grow"></span>
+      <button class="danger btn" id="brReset" style="padding:7px 14px">Forget everything</button>
+    </div>
+    <div id="brTableWrap"></div>
+  </div>
+</section>
+</main>
+</div>
+
+<footer>Scores are structural — always verify against a real model response.
+PromptForge runs entirely on 127.0.0.1 · no network · no telemetry · no LLM</footer>
+<div id="toast"></div>
+
+<input type="file" id="filePicker" style="display:none">
+<script>
+"use strict";
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+const esc = t => String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;")
+  .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+let LABELS = {};
+let FIELDS = [];
+let WZ_CTX = null;          // last /api/parse result
+let WZ_PROMPT = "";         // last compiled prompt
+let WZ_SID = null;          // spec id of last compile (for Teach)
+
+const KIND_LABEL = {
+  boilerplate_removed: "stop repeating",
+  constraint_added: "new rule",
+  slot_override: "slot preference",
+};
+
+/* ---------------------------------------------------------------- api */
+async function api(path, body){
+  const opt = body !== undefined
+    ? {method:"POST", headers:{"Content-Type":"application/json"},
+       body: JSON.stringify(body)}
+    : {};
+  const r = await fetch(path, opt);
+  let j;
+  try { j = await r.json(); }
+  catch { throw new Error("[!] bad response from server"); }
+  if (!j.ok) throw new Error(j.error || "[!] request failed");
+  return j;
+}
+function toast(msg, kind){
+  const d = document.createElement("div");
+  d.className = "toast" + (kind ? " " + kind : "");
+  d.textContent = msg;
+  $("#toast").appendChild(d);
+  setTimeout(() => d.remove(), kind === "bad" ? 6000 : 3000);
+}
+async function busy(btn, fn){
+  if (btn) btn.disabled = true;
+  try { await fn(); }
+  catch (e) { toast(e.message || String(e), "bad"); }
+  finally { if (btn) btn.disabled = false; }
+}
+function showErr(sel, e){
+  const el = $(sel);
+  if (el) el.innerHTML = '<div class="err">' + esc(e.message || e) + "</div>";
+  toast(e.message || String(e), "bad");
+}
+
+/* -------------------------------------------------------------- utils */
+async function copyOf(sel){
+  const text = $(sel).textContent;
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand("copy"); ta.remove();
+  }
+  toast("copied to clipboard", "good");
+}
+function downloadText(text, name){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type: "text/plain"}));
+  a.download = name || "prompt.txt";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+async function saveToProject(text, path){
+  if (!path || !path.trim()) throw new Error("[!] enter a path first, e.g. prompts\\my.txt");
+  const j = await api("/api/save", {path: path.trim(), text});
+  toast("wrote " + j.path + " (" + j.bytes + " bytes)", "good");
+}
+function loadFileInto(sel){
+  const pick = $("#filePicker");
+  pick.onchange = () => {
+    const f = pick.files[0];
+    if (!f) return;
+    const fr = new FileReader();
+    fr.onload = () => { $(sel).value = fr.result; toast("loaded " + f.name, "good"); };
+    fr.readAsText(f);
+    pick.value = "";
+  };
+  pick.click();
+}
+function scorePct(s){ return s >= 70 ? "g" : s >= 40 ? "y" : "r"; }
+function scoreLine(score, passed, total, extra){
+  return '<span class="pct ' + scorePct(score) + '">' + score + '%</span>' +
+    (passed !== "" ? '<span class="frac">' + passed + "/" + total + " passed</span>" : "") +
+    (extra || "") +
+    '<span class="note">structural — verify against a real model output</span>';
+}
+function chipRow(structure){
+  return structure.map(s =>
+    '<span class="chip ' + (s.pass ? "ok" : "no") + '">' +
+    (s.pass ? "✓ " : "✗ ") + esc(LABELS[s.key] || s.key) + "</span>").join("");
+}
+function checklistRows(items){
+  return items.map(i =>
+    "<tr><td class='mono'>" + esc(i.probe || "—") + "</td>" +
+    "<td><span class='" + (i.pass ? "pass'>✓" : "fail'>✗") + "</span> " +
+    esc(i.reason) + "</td></tr>").join("");
+}
+function diffHtml(diff){
+  return diff.split("\n").map(l => {
+    const e = esc(l);
+    if (l.startsWith("+++") || l.startsWith("---")) return '<span class="h">' + e + "</span>";
+    if (l.startsWith("@@"))   return '<span class="h">' + e + "</span>";
+    if (l.startsWith("+"))    return '<span class="d">' + e + "</span>";
+    if (l.startsWith("-"))    return '<span class="x">' + e + "</span>";
+    return e;
+  }).join("\n");
+}
+function warningsHtml(ws){
+  return (ws || []).map(w => '<div class="warn">⚠ ' + esc(w) + "</div>").join("");
+}
+
+/* ------------------------------------------------------------- nav */
+function goView(name){
+  $$("#nav button").forEach(x => x.classList.toggle("on", x.dataset.v === name));
+  $$(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + name));
+  window.scrollTo({top: 0});
+}
+$$("#nav button").forEach(b => b.onclick = () => goView(b.dataset.v));
+document.addEventListener("click", e => {
+  const g = e.target.closest("[data-goto]");
+  if (g) {
+    e.preventDefault();
+    if (g.dataset.mode) setCompareMode(g.dataset.mode);
+    goView(g.dataset.goto);
+  }
+  const b = e.target.closest("[data-copy]");
+  if (b) copyOf(b.dataset.copy);
+  const d = e.target.closest("[data-dl]");
+  if (d) downloadText($(d.dataset.dl).textContent, d.dataset.name || "prompt.txt");
+});
+
+/* ------------------------------------------------------- field bootstrap */
+async function initFields(){
+  const j = await api("/api/fields");
+  FIELDS = j.fields; LABELS = j.struct_labels || {};
+  renderLibrary();
+  refreshBrainPill();
+}
+
+/* ================================================================ WRITE */
+const DUP_RE = /^\s*#{1,2}\s+\S.*$/gm;
+function maybeDupBanner(){
+  const t = $("#wzText").value;
+  const heads = t.match(DUP_RE) || [];
+  if (heads.length >= 2 && !$("#wzDup").dataset.dismissed)
+    $("#wzDup").classList.add("on");
+}
+$("#wzText").addEventListener("input", maybeDupBanner);
+$("#wzDupX").onclick = () => {
+  $("#wzDup").classList.remove("on");
+  $("#wzDup").dataset.dismissed = "1";
+};
+
+$("#wzRead").onclick = () => busy($("#wzRead"), async () => {
+  const text = $("#wzText").value;
+  if (!text.trim()) throw new Error("[!] paste your chat first");
+  const j = await api("/api/parse", {text});
+  WZ_CTX = j.ctx;
+  renderStep2();
+  $("#wzStep2").style.display = "";
+  $("#wzStep3").style.display = "none";
+  $("#wzStep2").scrollIntoView({behavior:"smooth", block:"nearest"});
+});
+
+function renderStep2(){
+  const ctx = WZ_CTX || {};
+  const matched = !!ctx.spec_id;
+  const conf = Math.round((ctx.confidence || 0) * 100);
+  let head = esc(ctx.field || "General");
+  if (matched) {
+    head += ' <span class="muted">· template ' + esc(ctx.spec_id) +
+      " · " + conf + "% sure</span>";
+  } else {
+    head += ' <span class="muted">· no template match — we build a ' +
+      esc(ctx.field || "general") + " prompt straight from your text</span>";
+  }
+  if (ctx.candidates && ctx.candidates.length > 1) {
+    head += '<div class="muted" style="font-weight:400;font-size:12px">' +
+      "also considered: " +
+      ctx.candidates.slice(1, 3).map(c => esc(c.id)).join(", ") + "</div>";
+  }
+  $("#wzField").innerHTML = head;
+  const rows = [];
+  Object.entries(ctx.slots || {}).forEach(([k, v]) =>
+    rows.push(k + ": " + v.value));
+  (ctx.constraints || []).forEach(c => rows.push("rule · " + c.text));
+  (ctx.facts || []).forEach(f => rows.push(f.kind + ": " + f.value));
+  $("#wzUnderstood").innerHTML = rows.length
+    ? '<label class="f" style="margin-top:10px">what we understood</label>' +
+      '<ul style="margin:4px 0 0;padding-left:18px">' +
+      rows.map(r =>
+        '<li style="margin:3px 0;font:12.5px ui-monospace,Consolas,monospace">' +
+        esc(r) + "</li>").join("") + "</ul>"
+    : '<div class="muted" style="margin-top:6px">nothing structured ' +
+      "detected — your raw text becomes the prompt's core request</div>";
+}
+$("#wzBuild").onclick = () => busy($("#wzBuild"), async () => {
+  const j = await api("/api/compile", {text: $("#wzText").value});
+  WZ_PROMPT = j.prompt;
+  WZ_SID = j.report.spec_id;
+  $("#wzStep3").style.display = "";
+  $("#wzPrompt").textContent = j.prompt;
+  $("#wzScore").innerHTML = scoreLine(j.score, "", "",
+    '<span class="frac">' + esc(j.report.field || j.report.spec_id) + "</span>");
+  $("#wzWarn").innerHTML = warningsHtml(j.warnings);
+  $("#wzPath").value = "prompts\\" +
+    (j.report.spec_id || "prompt").replace(/\./g, "_") + ".txt";
+  renderLearnedChips(j.report.learned || {});
+  $("#wzStep3").scrollIntoView({behavior:"smooth", block:"nearest"});
+});
+
+async function renderLearnedChips(learned){
+  const el = $("#wzLearnedChips");
+  const items = [
+    ...(learned.suppressed || []).map(s => ({op: "−", text: s})),
+    ...(learned.added || []).map(s => ({op: "+", text: s})),
+  ];
+  if (!items.length) { el.innerHTML = ""; return; }
+  let pats = [];
+  try { pats = (await api("/api/brain?action=show")).patterns || []; }
+  catch { /* chips render without forget buttons */ }
+  el.innerHTML = items.map(it => {
+    const m = pats.find(p => p.sample && it.text &&
+      (p.sample.trim() === it.text.trim() ||
+       it.text.includes(p.sample.trim()) || p.sample.includes(it.text.trim())));
+    return '<span class="chip learned" title="learned from your edits">' +
+      it.op + " " + esc(it.text.length > 90 ? it.text.slice(0, 90) + "…" : it.text) +
+      (m ? '<button data-fp="' + m.id + '" title="unlearn this">✕</button>' : "") +
+      "</span>";
+  }).join("");
+  $$("[data-fp]", el).forEach(b => b.onclick = () => busy(b, async () => {
+    await api("/api/brain/action", {action: "forget", id: +b.dataset.fp});
+    b.closest(".chip").remove();
+    toast("forgotten — that pattern is gone", "good");
+    refreshBrainPill();
+  }));
+}
+$("#wzSave").onclick = () => busy($("#wzSave"), () =>
+  saveToProject($("#wzPrompt").textContent, $("#wzPath").value));
+
+$("#wzTeachBtn").onclick = () => {
+  const el = $("#wzTeach");
+  const open = el.style.display === "none";
+  el.style.display = open ? "" : "none";
+  if (open) $("#wzTeachText").value = WZ_PROMPT;
+};
+$("#wzTeachRun").onclick = () => busy($("#wzTeachRun"), async () => {
+  const gen = WZ_PROMPT, cor = $("#wzTeachText").value;
+  if (!gen) throw new Error("[!] build a prompt first");
+  if (!cor.trim()) throw new Error("[!] paste your corrected version");
+  if (gen === cor) throw new Error("[!] identical to the generated prompt — edit it first");
+  const j = await api("/api/learn",
+    {field: WZ_SID || "general", generated: gen, corrected: cor});
+  const s = j.summary;
+  const parts = [];
+  if (s.learned && s.learned.length) {
+    const by = {};
+    s.learned.forEach(i => { by[i.kind] = (by[i.kind] || 0) + 1; });
+    Object.entries(by).forEach(([k, n]) =>
+      parts.push(n + "× " + (KIND_LABEL[k] || k)));
+  }
+  $("#wzTeachOut").innerHTML = s.learned.length
+    ? '<div class="warn">✓ learned: ' + parts.map(esc).join(", ") +
+      (s.ignored ? " · " + s.ignored + " line(s) ignored (headings/checklists are never learned)" : "") +
+      " — weight builds after 3 consistent edits</div>"
+    : '<div class="muted">nothing new to learn — headings, checklists and ' +
+      "already-known lines are skipped</div>";
+  toast("taught " + s.learned.length + " pattern(s)", "good");
+  refreshBrainPill();
+});
+
+/* pass-through buttons from Write output */
+$("#wzToScore").onclick = () => {
+  $("#scText").value = WZ_PROMPT;
+  goView("score");
+  $("#scRun").click();
+};
+$("#wzToImprove").onclick = () => {
+  $("#imText").value = WZ_PROMPT;
+  goView("improve");
+};
+$("#wzToVariants").onclick = () => {
+  $("#vzText").value = WZ_PROMPT;
+  goView("variants");
+};
+
+/* ================================================================ SCORE */
+$("#scRun").onclick = () => busy($("#scRun"), async () => {
+  $("#scErr").innerHTML = "";
+  const j = await api("/api/check", {text: $("#scText").value});
+  const r = j.result;
+  $("#scOut").style.display = "";
+  $("#scScore").innerHTML = scoreLine(r.score, r.passed, r.total,
+    '<span class="frac">' + esc(j.title) + "</span>");
+  $("#scChips").innerHTML = chipRow(r.structure);
+  $("#scTable tbody").innerHTML = checklistRows(r.items);
+});
+$("#scToImprove").onclick = () => {
+  $("#imText").value = $("#scText").value;
+  goView("improve");
+};
+
+/* ============================================================== IMPROVE */
+$("#imRun").onclick = () => busy($("#imRun"), async () => {
+  const j = await api("/api/fix", {text: $("#imText").value, slots: {}});
+  $("#imOut").style.display = "";
+  $("#imScore").innerHTML = scoreLine(j.after, "", "") +
+    '<span class="frac">' + j.before + "% → " + j.after + "%</span>";
+  const rep = j.report || {};
+  const parts = [];
+  if ((rep.substituted || []).length)
+    parts.push("slots filled: " + [...new Set(rep.substituted)].join(", "));
+  if ((rep.sections_added || []).length)
+    parts.push("sections added: " + rep.sections_added.join(", "));
+  if ((rep.lines_added || []).length)
+    parts.push(rep.lines_added.length + " line(s) added");
+  if ((rep.unresolved || []).length)
+    parts.push("⚠ unresolved: " + rep.unresolved.join(", "));
+  $("#imReport").innerHTML = parts.length
+    ? '<div class="muted">' + parts.map(esc).join(" · ") + "</div>" : "";
+  $("#imDiff").innerHTML = diffHtml(j.diff || "(no changes)");
+  $("#imText2").textContent = j.prompt;
+  $("#imPath").value = "prompts\\improved.txt";
+});
+$("#imSave").onclick = () => busy($("#imSave"), () =>
+  saveToProject($("#imText2").textContent, $("#imPath").value));
+
+/* ==================================================== COMPARE & COMBINE */
+let CP_MODE = "compare";
+function setCompareMode(m){
+  CP_MODE = m;
+  $$(".tabrow [data-cm]").forEach(b => b.classList.toggle("on", b.dataset.cm === m));
+  $("#cpRun").textContent = m === "compare" ? "Compare" : "Combine";
+}
+$$(".tabrow [data-cm]").forEach(b => b.onclick = () => setCompareMode(b.dataset.cm));
+
+$("#cpRun").onclick = () => busy($("#cpRun"), async () => {
+  $("#cpErr").innerHTML = "";
+  const a = $("#cpA").value, b = $("#cpB").value;
+  if (CP_MODE === "compare") {
+    const j = await api("/api/compare", {a, b});
+    $("#cpOut").style.display = "";
+    $("#cpCompareOut").style.display = "";
+    $("#cpCombineOut").style.display = "none";
+    const A = j.a, B = j.b;
+    $("#cpScore").innerHTML =
+      '<span class="pct ' + scorePct(A.score) + '">' + A.score + '%</span>' +
+      '<span class="frac">A</span>' +
+      '<span class="pct ' + scorePct(B.score) + '">' + B.score + '%</span>' +
+      '<span class="frac">B</span>' +
+      '<span class="note">structural — verify against a real model output</span>';
+    $("#cpChips").innerHTML = A.structure.map((sa, i) => {
+      const sb = B.structure[i] || {pass: false};
+      const k = sa.key;
+      const both = sa.pass && sb.pass, none = !sa.pass && !sb.pass;
+      return '<span class="chip ' + (both ? (sa.pass ? "ok" : "no") : "no") +
+        '" style="' + (both && sa.pass ? "" : "border-color:var(--warn);color:var(--warn)") +
+        '">' + (both && sa.pass ? "✓ both " : none ? "✗ neither " : "⚡ ") +
+        esc(LABELS[k] || k) + "</span>";
+    }).join("");
+    $("#cpTable tbody").innerHTML = A.items.map((ia, i) => {
+      const ib = B.items[i] || {pass: false};
+      const win = ia.pass && !ib.pass ? " A" : ib.pass && !ia.pass ? " B" : "";
+      return "<tr><td class='" + (ia.pass ? "pass'>✓" : "fail'>✗") +
+        "</td><td class='" + (ib.pass ? "pass'>✓" : "fail'>✗") +
+        "</td><td class='mono'>" + esc(ia.probe || "—") + "</td><td>" +
+        (win ? "<b class='pass'>" + win + " edge</b>" :
+               '<span class="muted">—</span>') + "</td></tr>";
+    }).join("");
+    $("#cpWinner").textContent = "winner: " + j.winner;
+  } else {
+    const j = await api("/api/merge", {a, b, slots: {}});
+    $("#cpOut").style.display = "";
+    $("#cpCompareOut").style.display = "none";
+    $("#cpCombineOut").style.display = "";
+    $("#cpStat").innerHTML =
+      '<span class="k">A ' + j.a + '%</span><span class="k">→ B ' + j.b +
+      '%</span><span class="m">→ combined ' + j.merged + "%</span>" +
+      '<span class="frac" style="margin-left:8px">structural — verify ' +
+      "against a real model output</span>";
+    const tf = (j.meta && j.meta.took_from) || {a: 0, b: 0};
+    $("#cpMeta").textContent = "sections taken: A " + tf.a + ", B " + tf.b;
+    $("#cpWarn").innerHTML = warningsHtml(j.warnings);
+    $("#cpText").textContent = j.prompt;
+    $("#cpPath").value = "prompts\\combined.txt";
+  }
+});
+$("#cpToCombine").onclick = () => setCompareMode("combine");
+$("#cpSave").onclick = () => busy($("#cpSave"), () =>
+  saveToProject($("#cpText").textContent, $("#cpPath").value));
+
+/* ============================================================= VARIANTS */
+$("#vzRun").onclick = () => busy($("#vzRun"), async () => {
+  const j = await api("/api/ensemble", {
+    text: $("#vzText").value,
+    attempts: +$("#vzAtt").value || 12,
+    seed: $("#vzSeed").value.trim() || null,
+    top: +$("#vzTopN").value || 3, slots: {}});
+  $("#vzOut").style.display = "";
+  $("#vzLog").innerHTML = (j.log || []).map(l =>
+    "<div>" + (/^start/.test(l) ? "<b>" + esc(l) + "</b>" : esc(l)) +
+    "</div>").join("");
+  $("#vzTop").innerHTML = (j.top || []).map((c, i) =>
+    '<div class="cand' + (i === 0 ? " best" : "") + '">' +
+    '<div class="top"><span class="rank">#' + (i + 1) + '</span>' +
+    '<span class="sc ' + scorePct(c.score) + '">' + c.score + "%</span>" +
+    (i === 0 ? '<span class="badge" style="border-color:var(--ok);color:var(--ok)">best</span>' : "") +
+    '<span class="grow"></span>' +
+    '<button class="btn ghost vzCp">Copy</button>' +
+    '<button class="btn ghost vzDl">Download</button></div>' +
+    "<pre>" + esc(c.prompt) + "</pre></div>").join("");
+  $$("#vzTop .cand").forEach((el, i) => {
+    $(".vzCp", el).onclick = async () => {
+      try { await navigator.clipboard.writeText(j.top[i].prompt);
+            toast("copied candidate #" + (i + 1), "good"); }
+      catch { toast("clipboard blocked — use Download", "bad"); }
+    };
+    $(".vzDl", el).onclick = () =>
+      downloadText(j.top[i].prompt, "candidate_" + (i + 1) + ".txt");
+  });
+});
+
+/* ============================================================== LIBRARY */
+function renderLibrary(){
+  const tb = $("#libTable tbody");
+  const sorted = [...FIELDS].sort((a, b) => a.name.localeCompare(b.name));
+  tb.innerHTML = sorted.map(f =>
+    '<tr data-id="' + esc(f.id) + '"><td><b>' + esc(f.name) + "</b>" +
+    '<div class="muted">' + esc(f.summary || "") + "</div></td>" +
+    "<td>" + esc(f.domain) + "</td></tr>").join("");
+  $$("#libTable tr[data-id]").forEach(tr => tr.onclick = () => toggleLibDetail(tr));
+}
+async function toggleLibDetail(tr){
+  const nxt = tr.nextElementSibling;
+  if (nxt && nxt.classList.contains("detail")) { nxt.remove(); return; }
+  $$("#libTable .detail").forEach(d => d.remove());
+  const j = await api("/api/spec?id=" + encodeURIComponent(tr.dataset.id));
+  const s = j.spec;
+  const slots = (s.slots || []).map(x =>
+    '<div class="mono">' + esc(x.name) + " — " +
+    (x.required ? "required" : "optional") +
+    (x.default !== null && x.default !== undefined && x.default !== ""
+      ? " · default=" + esc(x.default) : "") +
+    (x.hint ? ' <span class="muted">(' + esc(x.hint) + ")</span>" : "") +
+    "</div>").join("") || '<span class="muted">none</span>';
+  const meth = (s.methodology || []).map((m, i) =>
+    (i + 1) + ". " + esc(m)).join("<br>") || '<span class="muted">none</span>';
+  const tr2 = document.createElement("tr");
+  tr2.className = "detail";
+  tr2.innerHTML = '<td colspan="2">' +
+    '<div style="margin-top:4px"><b>inputs</b><br>' + slots + "</div>" +
+    '<div style="margin-top:8px"><b>methodology</b><br>' + meth + "</div>" +
+    '<div class="actions"><span class="muted">v' + esc(s.spec_version || "?") +
+    " · reviewed " + esc(s.last_reviewed || "n/a") + "</span></div></td>";
+  tr.after(tr2);
+}
+$("#libHealth").onclick = () => busy($("#libHealth"), async () => {
+  const j = await api("/api/lint", {});
+  const bad = j.errors.length;
+  const badge = $("#libBadge");
+  badge.textContent = bad
+    ? bad + " error(s)"
+    : j.count + "/" + j.count + " healthy";
+  badge.style.borderColor = bad ? "var(--bad)" : "var(--ok)";
+  badge.style.color = bad ? "var(--bad)" : "var(--ok)";
+  $("#libHealthOut").innerHTML =
+    j.errors.map(e => '<div class="err">[FAIL] ' + esc(e) + "</div>").join("") +
+    j.warnings.map(w => '<div class="warn">[warn] ' + esc(w) + "</div>").join("") +
+    (!bad && !j.warnings.length
+      ? '<div class="muted" style="margin-top:8px">all clean ✓</div>' : "");
+});
+
+/* ================================================================ BRAIN */
+async function refreshBrainPill(){
+  try {
+    const j = await api("/api/brain?action=show");
+    const n = (j.patterns || []).length;
+    const pill = $("#brainPill");
+    pill.style.display = n ? "" : "none";
+    pill.textContent = "🧠 " + n + " learned";
+  } catch { /* pill stays hidden */ }
+}
+$("#brRefresh").onclick = () => busy($("#brRefresh"), renderBrain);
+async function renderBrain(){
+  const j = await api("/api/brain?action=show");
+  const st = j.status || {};
+  const auto = st.auto_active || 0;
+  $("#brStats").innerHTML =
+    '<span class="m">' + (st.patterns || 0) + "</span>" +
+    '<span class="k">pattern(s)</span>' +
+    '<span class="k">· ' + auto + " auto-applying</span>" +
+    '<span class="k">· ' + Math.max(0, (st.patterns || 0) - auto) +
+    " waiting</span>";
+  $("#brThresh").textContent = j.auto_apply;
+  const wrap = $("#brTableWrap");
+  const pats = j.patterns || [];
+  if (!pats.length) {
+    wrap.innerHTML = '<div class="empty" style="margin-top:12px">' +
+      "<b>nothing learned yet</b>" +
+      "Write a prompt, edit it yourself, then hit <i>Teach it</i>. " +
+      "Lines you delete become 'stop repeating', rules you add become 'new rule'." +
+      "</div>";
+    return;
+  }
+  wrap.innerHTML = "<table><thead><tr><th>what</th><th>field</th>" +
+    "<th>learned line</th><th style='width:70px'>hits</th>" +
+    "<th style='width:110px'>status</th><th style='width:70px'></th>" +
+    "</tr></thead><tbody>" +
+    pats.map(p =>
+      "<tr><td><b>" + esc(KIND_LABEL[p.kind] || p.kind) + "</b></td>" +
+      '<td class="mono">' + esc(p.spec_id) + "</td>" +
+      '<td class="mono">' + esc((p.sample || "").slice(0, 110)) +
+      ((p.sample || "").length > 110 ? "…" : "") + "</td>" +
+      "<td>" + p.count + "</td>" +
+      "<td>" + (p.status === "auto"
+        ? '<span class="chip ok">auto</span>'
+        : '<span class="chip">suggest</span>') + "</td>" +
+      '<td><button class="ghost btn" data-fp="' + p.id +
+      '" style="padding:3px 10px">forget</button></td></tr>').join("") +
+    "</tbody></table>";
+  $$("[data-fp]", wrap).forEach(b => b.onclick = () => busy(b, async () => {
+    await api("/api/brain/action", {action: "forget", id: +b.dataset.fp});
+    toast("pattern forgotten", "good");
+    renderBrain();
+    refreshBrainPill();
+  }));
+}
+$("#brExport").onclick = () => busy($("#brExport"), async () => {
+  const j = await api("/api/brain?action=export");
+  downloadText(j.export, "brain.json");
+  toast("exported brain.json", "good");
+});
+$("#brReset").onclick = () => busy($("#brReset"), async () => {
+  if (!confirm("Forget every learned pattern? This cannot be undone."))
+    throw new Error("[!] cancelled");
+  const j = await api("/api/brain/action", {action: "reset", yes: true});
+  toast("forgot " + j.removed + " pattern(s)", "good");
+  renderBrain();
+  refreshBrainPill();
+});
+
+/* ------------------------------------------------------- brain view hook */
+const _goView = goView;
+goView = function(name){
+  _goView(name);
+  if (name === "brain") renderBrain().catch(e =>
+    toast(e.message || String(e), "bad"));
+};
+
+/* -------------------------------------------------------------- boot */
+initFields().catch(e =>
+  toast("boot failed: " + (e.message || e), "bad"));
+</script>
+</body>
+</html>
