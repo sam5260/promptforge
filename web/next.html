@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PromptForge — next message</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#2d3646;
+  --fg:#e6edf3; --dim:#8b98a9; --acc:#4da3ff; --ok:#3fb950; --bad:#f85149;
+  --warn:#d29922; --mono:Consolas,"Cascadia Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:24px 18px 60px}
+header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:20px;margin:0}
+a{color:var(--acc);text-decoration:none;font-size:13px}
+.sub{color:var(--dim);font-size:13px;margin:0 0 18px}
+textarea{width:100%;min-height:260px;background:var(--panel);color:var(--fg);
+  border:1px solid var(--line);border-radius:8px;padding:12px;
+  font:13px/1.55 var(--mono);resize:vertical;outline:none}
+textarea:focus{border-color:var(--acc)}
+.hint{color:var(--dim);font-size:12px;margin:6px 0 14px;font-family:var(--mono)}
+.row{display:flex;gap:10px;align-items:center}
+button{background:var(--acc);color:#04121f;border:0;border-radius:8px;
+  padding:9px 18px;font:600 14px inherit;cursor:pointer}
+button:hover{filter:brightness(1.1)}
+button.ghost{background:none;border:1px solid var(--line);color:var(--fg);
+  font-weight:400;padding:5px 12px;font-size:12px}
+.err{color:var(--bad);font:13px var(--mono);margin:12px 0}
+.card{display:none;margin-top:22px;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.badges{display:flex;gap:8px;flex-wrap:wrap;padding:14px 16px 0}
+.badge{font:11px var(--mono);color:var(--dim);border:1px solid var(--line);
+  border-radius:20px;padding:3px 11px}
+.badge.state{color:#04121f;background:var(--acc);border-color:var(--acc);
+  font-weight:700;letter-spacing:.4px}
+.badge.call{color:var(--warn);border-color:var(--warn)}
+.sect{padding:14px 16px;border-top:1px solid var(--line)}
+.sect h3{margin:0 0 8px;font:700 11px var(--mono);letter-spacing:1.2px;
+  color:var(--dim);text-transform:uppercase}
+.msg{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  padding:12px 14px;font:14px/1.6 var(--mono);white-space:pre-wrap;
+  color:#fff;position:relative}
+.msg .copy{position:absolute;top:8px;right:8px}
+ul.items{margin:0;padding:0;list-style:none}
+ul.items li{padding:6px 0;border-bottom:1px dashed var(--line);
+  font-size:13px;color:var(--fg)}
+ul.items li:last-child{border-bottom:0}
+ul.items .q{color:var(--dim);font-family:var(--mono);font-size:12px}
+ul.items .why{color:var(--dim);font-size:12px;display:block}
+ul.viol li{color:var(--bad)}
+ul.viol .q{color:var(--bad)}
+ul.cons li{color:var(--fg)}
+pre.diffish{margin:0;font:12px var(--mono);color:var(--dim);white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>PromptForge — next message</h1>
+  <a href="/">← builder</a>
+</header>
+<p class="sub">Paste the full chat transcript. Get the next message you send,
+with the reason, the constraints carried, and the alternatives.
+<span style="color:var(--warn)">Never invents your decisions.</span></p>
+
+<textarea id="tx" placeholder="user: Add response caching to /api/inventory. Don't change the response shape — clients depend on it.&#10;assistant: Added an LRU cache in front of /api/inventory."></textarea>
+<p class="hint">markers: user: / assistant: (or [user]: …). code fences stay intact. secrets? redact before pasting.</p>
+<div class="row">
+  <button id="go">Get next message</button>
+  <button id="sample" class="ghost">load sample</button>
+  <span id="busy" style="color:var(--dim);font:12px var(--mono)"></span>
+</div>
+<div class="err" id="err"></div>
+
+<div class="card" id="card">
+  <div class="badges">
+    <span class="badge state" id="b-state"></span>
+    <span class="badge" id="b-turns"></span>
+    <span class="badge call" id="b-call" hidden>YOUR CALL — nothing moves until you pick</span>
+  </div>
+  <div class="sect">
+    <h3>next message</h3>
+    <div class="msg"><span id="message"></span>
+      <button class="ghost copy" id="copy">copy</button></div>
+  </div>
+  <div class="sect"><h3>why</h3><ul class="items" id="why"></ul></div>
+  <div class="sect"><h3>constraints carried</h3><ul class="items cons" id="cons"></ul></div>
+  <div class="sect" id="viol-sect" hidden><h3>violations detected</h3>
+    <ul class="items viol" id="viol"></ul></div>
+  <div class="sect"><h3>alternatives</h3><ul class="items" id="alts"></ul></div>
+</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const SAMPLE = "user: Add response caching to /api/inventory. Don't change the response shape — clients depend on it.\nassistant: Added an LRU cache in front of /api/inventory. I also tidied the serializer while I was in there.";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function li(quote, body){
+  return `<li><span class="q">${esc(quote)}</span> — ${esc(body)}</li>`;
+}
+function render(card){
+  $("b-state").textContent = card.state.replace(/_/g," ");
+  $("b-turns").textContent = card.turn_count + (card.turn_count===1?" turn":" turns");
+  $("b-call").hidden = !card.your_call;
+  $("message").textContent = card.message;
+  $("why").innerHTML = card.why.map(w => li(`turn ${w.turn}: ${w.quote}`, w.reason)).join("");
+  $("cons").innerHTML = card.constraints_carried.length
+    ? card.constraints_carried.map(c => li(`turn ${c.turn}:`, c.text)).join("")
+    : `<li><span class="why">none — nothing standing from the user</span></li>`;
+  const v = card.violations || [];
+  $("viol-sect").hidden = v.length === 0;
+  $("viol").innerHTML = v.map(x => li(`[${x.kind}]`, x.detail)).join("");
+  $("alts").innerHTML = card.alternatives.map(a => `<li>${esc(a)}</li>`).join("");
+  $("card").style.display = "block";
+}
+async function run(){
+  const text = $("tx").value;
+  $("err").textContent = ""; $("card").style.display = "none";
+  if(!text.trim()){ $("err").textContent = "[!] paste a transcript first"; return; }
+  $("busy").textContent = "reading…";
+  try{
+    const r = await fetch("/api/next", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({transcript: text})
+    });
+    const data = await r.json();
+    if(!r.ok || !data.ok) throw new Error(data.error || r.status);
+    render(data.card);
+    $("busy").textContent = "";
+  }catch(e){ $("busy").textContent = ""; $("err").textContent = "[!] " + e.message; }
+}
+$("go").onclick = run;
+$("sample").onclick = () => { $("tx").value = SAMPLE; };
+$("copy").onclick = async () => {
+  try{ await navigator.clipboard.writeText($("message").textContent);
+       $("copy").textContent = "copied"; setTimeout(()=> $("copy").textContent="copy", 1200); }
+  catch(e){ /* clipboard unavailable */ }
+};
+$("tx").addEventListener("keydown", e => {
+  if((e.ctrlKey||e.metaKey) && e.key === "Enter") run();
+});
+</script>
+</body>
+</html>

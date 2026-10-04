@@ -327,5 +327,50 @@ class TestSecurity(ServerCase):
         self.assertEqual(st, 403)
 
 
+class TestNextApi(ServerCase):
+
+    def test_next_page_served(self):
+        for path in ("/next", "/next.html"):
+            url = f"http://127.0.0.1:{self.port}{path}"
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                body = resp.read().decode("utf-8")
+                self.assertEqual(resp.status, 200, path)
+                self.assertIn("text/html", resp.headers["Content-Type"])
+                self.assertIn("Get next message", body)
+
+    def test_api_next_card(self):
+        st, j = self.req("/api/next", {
+            "transcript": "user: Add rate limiting to /login.\n"
+                          "assistant: Added a token bucket in front of "
+                          "/login."})
+        self.assertEqual(st, 200)
+        card = j["card"]
+        self.assertEqual(card["state"], "unverified_work")
+        self.assertTrue(card["message"])
+        self.assertFalse(card["your_call"])
+
+    def test_api_next_your_call_never_picks(self):
+        st, j = self.req("/api/next", {
+            "transcript": "user: Pick a queue.\n"
+                          "assistant: Two options: RabbitMQ or SQS. Which "
+                          "one do you prefer?"})
+        self.assertEqual(st, 200)
+        card = j["card"]
+        self.assertTrue(card["your_call"])
+        self.assertIsNone(card["decisions"][0]["choice"])
+        self.assertIn("your call", card["message"].lower())
+
+    def test_api_next_empty_400(self):
+        st, j = self.req("/api/next", {"transcript": "   "})
+        self.assertEqual(st, 400)
+        self.assertIn("empty transcript", j["error"])
+
+    def test_api_next_guarded(self):
+        st, j = self.req("/api/next",
+                         {"transcript": "user: Continue."},
+                         headers={"Origin": "https://evil.example"})
+        self.assertEqual(st, 403)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

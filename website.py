@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 import brain
 import context_parser
 import forge
+import nextmsg
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
@@ -305,6 +306,14 @@ def api_brain_post(query, body):
     raise ApiError(400, f"[!] unknown brain action '{action}'")
 
 
+def api_next(query, body):
+    text = body.get("transcript") or ""
+    if not str(text).strip():
+        raise ApiError(400, "[!] empty transcript — paste the chat first")
+    card = nextmsg.analyze(str(text))
+    return ok({"card": card})
+
+
 ROUTES = {
     "/api/fields": api_fields,
     "/api/spec": api_spec,
@@ -321,6 +330,7 @@ ROUTES = {
     "/api/learn": api_learn,
     "/api/brain": api_brain,
     "/api/brain/action": api_brain_post,
+    "/api/next": api_next,
 }
 
 
@@ -413,6 +423,14 @@ def make_handler(root=None):
                                "text/plain; charset=utf-8")
                     return
                 self._send(200, index.read_bytes(), "text/html; charset=utf-8")
+                return
+            if path in ("/next", "/next.html"):
+                page = WEB_DIR / "next.html"
+                if not page.is_file():
+                    self._send(500, "[!] web/next.html missing".encode(),
+                               "text/plain; charset=utf-8")
+                    return
+                self._send(200, page.read_bytes(), "text/html; charset=utf-8")
                 return
             if path.startswith("/static/"):
                 rel = path[len("/static/"):]
