@@ -189,5 +189,46 @@ class TestCompileWithBrain(unittest.TestCase):
         self.assertNotIn("## Your preferences", res["prompt"])
 
 
+class TestTeachSanitization(unittest.TestCase):
+    """write-path hardening: teach is the funnel into every future prompt —
+    control/bidi chars stripped, lengths capped before the row lands."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = pathlib.Path(self.tmp.name) / "brain.db"
+        brain.set_db(self.db)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _row(self):
+        import sqlite3
+        con = sqlite3.connect(self.db)
+        try:
+            return con.execute(
+                "SELECT norm, sample FROM events ORDER BY rowid DESC "
+                "LIMIT 1").fetchone()
+        finally:
+            con.close()
+
+    def test_control_and_bidi_chars_stripped_on_teach(self):
+        dirty = "no secrets\x00\x07\u202e\u2066here"
+        self.assertIsNotNone(
+            brain.record("constraint_added", "cyber.web", dirty, dirty))
+        norm, sample = self._row()
+        pattern = r"[\x00-\x08\x0b-\x1f\x7f\u202a-\u202e\u2066-\u2069]"
+        self.assertNotRegex(norm, pattern)
+        self.assertNotRegex(sample, pattern)
+        self.assertIn("no secrets", norm)
+        self.assertIn("here", norm)
+
+    def test_lengths_capped_on_teach(self):
+        big = "y" * 900
+        brain.record("constraint_added", "cyber.web", big, big)
+        norm, sample = self._row()
+        self.assertLessEqual(len(norm), 500)
+        self.assertLessEqual(len(sample), 400)
+
+
 if __name__ == "__main__":
     unittest.main()

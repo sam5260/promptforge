@@ -23,6 +23,7 @@ model output quality. verify winners against a real model response.
 
 import argparse
 import difflib
+import hashlib
 import json
 import random
 import re
@@ -760,14 +761,35 @@ def apply_constraints(prompt, constraints):
     return "\n".join(lines).rstrip("\n") + "\n", len(cons)
 
 
-def brain_meta(use_brain, as_of=None):
-    """provenance for an artifact: state hash + decay day. metadata only —
-    lives in reports/JSON/stderr, never inside the prompt body itself."""
+def specs_hash(specs=None):
+    """sha256 of the canonical spec set (sorted keys, compact JSON) —
+    configuration provenance: same input + same specs == same artifact"""
+    specs = specs if specs is not None else load_specs()
+    blob = json.dumps(specs, sort_keys=True, ensure_ascii=False,
+                      separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def merge_prefs(spec_id, provided, use_brain, as_of=None):
+    """ONE seam for effective slot resolution: learned prefs sit UNDER
+    caller-provided slots, explicit always dominates; use_brain=False
+    never touches the brain DB. CLI gen, api_gen and compile_prompt
+    all resolve through here — no second copy of the merge order."""
+    import brain
+    if not use_brain:
+        return dict(provided)
+    return {**brain.slot_prefs(spec_id, as_of=as_of), **dict(provided)}
+
+
+def brain_meta(use_brain, as_of=None, specs=None):
+    """provenance for an artifact: brain state, decay day, spec-set identity.
+    metadata only — lives in reports/JSON/stderr, never in the prompt body."""
     import brain
     return {"use_brain": bool(use_brain),
             "as_of": brain.as_of_day(as_of).isoformat(),
             "brain_hash": brain.payload_hash(as_of=as_of,
-                                             applied=bool(use_brain))}
+                                             applied=bool(use_brain)),
+            "spec_hash": specs_hash(specs)}
 
 
 def compile_prompt(text, spec_id=None, explicit=None, *, use_brain,
@@ -785,12 +807,10 @@ def compile_prompt(text, spec_id=None, explicit=None, *, use_brain,
     warnings = []
     if chosen:
         spec = get_spec(specs, chosen)
-        slots = {}
-        if use_brain:
-            slots.update(brain.slot_prefs(spec["id"], as_of=as_of))
-        slots.update({k: v.get("value", "")
-                      for k, v in ctx.get("slots", {}).items()})
-        slots.update(explicit or {})
+        parsed = {k: v.get("value", "")
+                  for k, v in ctx.get("slots", {}).items()}
+        slots = merge_prefs(spec["id"], {**parsed, **(explicit or {})},
+                            use_brain, as_of)
         values, warnings = slot_values(spec, slots, missing_ok=True)
     else:
         slug, label = guess_field(text)
@@ -809,6 +829,7 @@ def compile_prompt(text, spec_id=None, explicit=None, *, use_brain,
     nm = spec.get("name") or spec["id"]
     label = nm[:-7] if nm.endswith(" Prompt") else nm
     report = {
+        "schema": 1,
         "spec_id": spec["id"], "field": label,
         "confidence": ctx["confidence"],
         "candidates": ctx["candidates"], "inferred": ctx["slots"],
@@ -816,7 +837,7 @@ def compile_prompt(text, spec_id=None, explicit=None, *, use_brain,
         "facts": ctx["facts"],
         "learned": applied, "warnings": warnings, "mode": mode,
         "learned_on": bool(use_brain),
-        **brain_meta(use_brain, as_of),
+        **brain_meta(use_brain, as_of, specs),
     }
     return {"prompt": prompt, "values": values, "score": score, "report": report}
 
@@ -859,7 +880,8 @@ def parse_set(pairs):
 
 
 def gen_payload(spec, values, mode, prompt):
-    return {"field": spec["id"], "spec_version": spec.get("spec_version"),
+    return {"schema": 1, "field": spec["id"],
+            "spec_version": spec.get("spec_version"),
             "mode": mode, "slots": values, "prompt": prompt}
 
 
@@ -1188,12 +1210,9 @@ def main(argv=None):
             return EXIT_OK
 
         if args.command == "gen":
-            import brain
             interactive = sys.stdin.isatty() and not args.yes
-            slots = dict(provided)
-            if not args.no_brain:
-                slots = {**brain.slot_prefs(spec["id"], as_of=args.as_of),
-                         **slots}
+            slots = merge_prefs(spec["id"], provided,
+                                not args.no_brain, args.as_of)
             values, _ = slot_values(spec, slots, interactive=interactive,
                                     assume_yes=args.yes)
             if args.strict:
@@ -1206,7 +1225,7 @@ def main(argv=None):
                           file=sys.stderr)
                     return EXIT_INPUT
             prompt = build(spec, values, args.mode)
-            meta = brain_meta(not args.no_brain, args.as_of)
+            meta = brain_meta(not args.no_brain, args.as_of, specs)
             if fmt_json:
                 payload = gen_payload(spec, values, args.mode, prompt)
                 payload.update(meta)

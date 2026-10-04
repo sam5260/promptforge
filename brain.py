@@ -72,9 +72,13 @@ def as_of_day(as_of=None):
 
 
 def _as_of_ts(as_of=None):
+    """start of the as_of day in LOCAL time. as_of_day defaults to the local
+    date, so the evaluation anchor must share that domain: with a UTC anchor,
+    a same-day rule (last_seen = local epoch) reads as ~0.2 days old between
+    local midnight and UTC midnight in TZs ahead of UTC, dropping eff below
+    AUTO_APPLY — same input, different verdict by wall clock."""
     day = as_of_day(as_of)
-    return datetime.datetime(day.year, day.month, day.day,
-                             tzinfo=datetime.timezone.utc).timestamp()
+    return datetime.datetime(day.year, day.month, day.day).timestamp()
 
 
 @contextmanager
@@ -103,11 +107,18 @@ def _decayed(count, last_seen_ts, now=None):
     return round(count * (0.5 ** (days / HALF_LIFE_DAYS)), 2)
 
 
+_CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u202a-\u202e\u2066-\u2069]")
+
+
 def record(kind, spec_id, norm, sample):
-    """upsert one feedback event — bumps count + last_seen on repeats"""
+    """upsert one feedback event — bumps count + last_seen on repeats.
+    write-path hardening (teach feeds every future prompt): control and
+    bidi-override chars stripped, lengths capped — poisoned rules must
+    not reach the read path."""
     spec_id = spec_id or ""
-    norm = _norm(norm)[:500]
-    sample = re.sub(r"\s+", " ", str(sample)).strip()[:400]
+    norm = _CTRL.sub("", _norm(norm))[:500]
+    sample = _CTRL.sub(" ", str(sample))
+    sample = re.sub(r"\s+", " ", sample).strip()[:400]
     if not norm or not sample:
         return None
     now = int(time.time())
@@ -208,7 +219,8 @@ def suggest(spec_id=None, min_effective=0.0, as_of=None):
                 "sample": row["sample"], "count": row["count"],
                 "effective": eff,
                 "status": "auto" if eff >= AUTO_APPLY else "suggest",
-                "age_days": round((now - row["last_seen_ts"]) / 86400.0, 1),
+                "age_days": max(0.0, round(
+                    (now - row["last_seen_ts"]) / 86400.0, 1)),
             })
     return out
 

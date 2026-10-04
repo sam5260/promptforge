@@ -410,7 +410,7 @@ PromptForge runs entirely on 127.0.0.1 · no network · no telemetry · no LLM</
 const $ = (s, r=document) => r.querySelector(s);
 const $$ = (s, r=document) => [...r.querySelectorAll(s)];
 const esc = t => String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;")
-  .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 let LABELS = {};
 let FIELDS = [];
 let WZ_CTX = null;          // last /api/parse result

@@ -15,7 +15,9 @@ import forge
 import website
 
 
-class TestWebsiteApi(unittest.TestCase):
+class ServerCase(unittest.TestCase):
+    """shared HTTP fixture: one server per class, JSON helper, headers hook"""
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="pfweb_"))
@@ -34,12 +36,12 @@ class TestWebsiteApi(unittest.TestCase):
         cls.server.server_close()
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def req(self, path, body=None):
+    def req(self, path, body=None, headers=None):
         url = f"http://127.0.0.1:{self.port}{path}"
         data = json.dumps(body).encode() if body is not None else None
-        r = urllib.request.Request(
-            url, data=data,
-            headers={"Content-Type": "application/json"} if data else {})
+        hdrs = {"Content-Type": "application/json"} if data else {}
+        hdrs.update(headers or {})
+        r = urllib.request.Request(url, data=data, headers=hdrs)
         try:
             with urllib.request.urlopen(r, timeout=15) as resp:
                 return resp.status, json.loads(resp.read().decode("utf-8"))
@@ -50,6 +52,9 @@ class TestWebsiteApi(unittest.TestCase):
                 return e.code, json.loads(raw.decode("utf-8"))
             except ValueError:
                 return e.code, {"ok": False, "error": raw.decode("utf-8")}
+
+
+class TestWebsiteApi(ServerCase):
 
     def test_01_index_page(self):
         url = f"http://127.0.0.1:{self.port}/"
@@ -245,6 +250,81 @@ class TestWebsiteApi(unittest.TestCase):
         self.assertIn("promptforge-brain-v1", j["export"])
         st, j = self.req("/api/brain?action=nope")
         self.assertEqual(st, 400)
+
+
+class TestSecurity(ServerCase):
+    """hardening invariants: Host allowlist, CSRF/Origin gate, JSON-only
+    POSTs, body cap, path traversal — the five gate-3 items."""
+
+    def test_cross_origin_post_rejected(self):
+        st, j = self.req("/api/gen", {"field": "cyber.web", "yes": True},
+                         headers={"Origin": "https://evil.example"})
+        self.assertEqual(st, 403)
+        self.assertFalse(j.get("ok"))
+
+    def test_same_origin_post_allowed(self):
+        st, j = self.req("/api/gen", {"field": "cyber.web", "yes": True},
+                         headers={"Origin": f"http://127.0.0.1:{self.port}"})
+        self.assertEqual(st, 200)
+        self.assertTrue(j.get("ok"))
+
+    def test_localhost_origin_allowed(self):
+        st, j = self.req("/api/gen", {"field": "cyber.web", "yes": True},
+                         headers={"Origin": f"http://localhost:{self.port}"})
+        self.assertEqual(st, 200)
+
+    def test_non_json_content_type_rejected(self):
+        r = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/gen",
+            data=json.dumps({"field": "cyber.web"}).encode(),
+            headers={"Content-Type": "text/plain"})
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(r, timeout=10)
+        self.assertEqual(cm.exception.code, 415)
+        cm.exception.close()
+
+    def test_bad_host_rejected(self):
+        r = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/",
+            headers={"Host": "evil.example"})
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(r, timeout=10)
+        self.assertEqual(cm.exception.code, 403)
+        cm.exception.close()
+
+    def test_path_traversal_blocked(self):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            for probe in ("/static/../../brain.db",
+                          "/static/..%2f..%2fbrain.db",
+                          "/static/../../../../windows/win.ini"):
+                conn.request("GET", probe)
+                resp = conn.getresponse()
+                body = resp.read()
+                self.assertEqual(resp.status, 404, probe)
+                self.assertNotIn(b"[fonts]", body, probe)
+                self.assertNotIn(b"SQLite", body, probe)
+        finally:
+            conn.close()
+
+    def test_body_cap_413(self):
+        old = website.MAX_BODY
+        website.MAX_BODY = 64
+        try:
+            st, j = self.req("/api/gen",
+                             {"field": "cyber.web", "yes": True,
+                              "slots": {"target": "x" * 300}})
+            self.assertEqual(st, 413)
+        finally:
+            website.MAX_BODY = old
+
+    def test_learn_also_guarded(self):
+        st, j = self.req("/api/learn",
+                         {"field": "cyber.web",
+                          "generated": "A\nB", "corrected": "A\nB\nC"},
+                         headers={"Origin": "https://evil.example"})
+        self.assertEqual(st, 403)
 
 
 if __name__ == "__main__":

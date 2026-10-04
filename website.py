@@ -126,9 +126,7 @@ def api_gen(query, body):
     yes = bool(body.get("yes", True))
     use_brain = bool(body.get("use_brain", body.get("learned", True)))
     as_of = _as_of_or_400(body.get("as_of"))
-    slots = dict(provided)
-    if use_brain:
-        slots = {**brain.slot_prefs(spec["id"], as_of=as_of), **slots}
+    slots = forge.merge_prefs(spec["id"], provided, use_brain, as_of)
     values, warnings = forge.slot_values(spec, slots,
                                          interactive=False, assume_yes=yes)
     if body.get("strict"):
@@ -373,7 +371,38 @@ def make_handler(root=None):
                 return True
             return False
 
+        def _guard(self):
+            """localhost-only contract: DNS-rebinding Host allowlist, JSON-only
+            POSTs, and cross-origin POST rejection (CSRF — teach is a write
+            path into the brain, so any web page could otherwise poison it).
+            Absent Origin = non-browser client (curl/tests) → allowed;
+            browser POSTs always carry Origin, and application/json forces
+            a CORS preflight that we never approve."""
+            host = (self.headers.get("Host") or "").split(":")[0].lower()
+            if host not in ("127.0.0.1", "localhost"):
+                self._send(403, {"ok": False,
+                                 "error": "[!] forbidden host"})
+                return False
+            if self.command == "POST":
+                ctype = (self.headers.get("Content-Type") or "") \
+                    .split(";")[0].strip().lower()
+                if ctype != "application/json":
+                    self._send(415, {"ok": False, "error":
+                                     "[!] POST requires "
+                                     "Content-Type: application/json"})
+                    return False
+                origin = self.headers.get("Origin")
+                if origin and origin not in (
+                        f"http://127.0.0.1:{self.server.server_port}",
+                        f"http://localhost:{self.server.server_port}"):
+                    self._send(403, {"ok": False,
+                                     "error": "[!] cross-origin POST rejected"})
+                    return False
+            return True
+
         def do_GET(self):
+            if not self._guard():
+                return
             if self._dispatch("GET"):
                 return
             path = urlparse(self.path).path
@@ -399,6 +428,8 @@ def make_handler(root=None):
             self._send(404, b"[!] not found", "text/plain; charset=utf-8")
 
         def do_POST(self):
+            if not self._guard():
+                return
             if not self._dispatch("POST"):
                 self._send(404, b"[!] not found", "text/plain; charset=utf-8")
 
