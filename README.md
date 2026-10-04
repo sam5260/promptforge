@@ -39,7 +39,10 @@ written down *before* the run; fixtures are never tuned after a run starts.
 A failed run is a result, not an inconvenience.
 
 Latest: intent 10/10, constraints 10/10, invented 0, violations 10/10
-exact, `Continue.` scores 1/10. 156 tests.
+exact, `Continue.` scores 1/10. Message quality (report-only, ≤ 3 word
+edits vs what you actually sent): 1/10 sendable, 9 edit-misses, 0 worse
+than `Continue.` — the engine classifies faithfully but words its
+messages differently than you do. 162 tests.
 
 ## How it reads a chat
 
@@ -112,6 +115,10 @@ itself: learned boilerplate gets suppressed, learned constraints get
 appended, learned slot preferences fill absent slots (your explicit text
 always wins). Nothing is learned until you teach it.
 
+The brain serves the **builder** only today — `nextmsg.py` does not read
+`brain.db` yet. Brain/state for the next-message engine is planned, not
+connected.
+
 ## Determinism
 
 Given identical input, configuration, brain state, seed, and `as_of`,
@@ -143,8 +150,13 @@ re-scores the full fixture bar every run.
 - **Determinism** (`f41e816`) — `as_of` day-pinning, `brain_hash`
   provenance, the `use_brain` chokepoint.
 - **This round** — pivot to the next-message engine: `nextmsg.py`,
-  fixtures + pass bar, `/next` page, 156 tests. The builder is now the
-  secondary surface; Gate-4 evaluation artifacts are frozen and shelved.
+  fixtures + pass bar, `/next` page. The builder is now the secondary
+  surface; Gate-4 evaluation artifacts are frozen and shelved.
+- **Hardening** — the four bugs found in the first real-transcript runs
+  fixed with regressions (secret scrub at the output boundary, rule
+  sentences out of the ask lane, option lead-ins stripped, "Next I'll…"
+  recognized), plus two report-only message measures (word-edit distance
+  vs what you sent, beats-`Continue.` per fixture). 162 tests.
 
 ## Scope
 

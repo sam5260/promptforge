@@ -35,6 +35,11 @@ PASS_BAR = {
     "beat_continue": True,    # intent count must exceed Continue. baseline
 }
 
+# report-only quality measures (never gate PASS): engine message vs the
+# message actually sent. >EDIT_WORDS_MAX word edits = an edit-miss;
+# "Continue." within the threshold = the tool added nothing that fixture.
+EDIT_WORDS_MAX = 3
+
 STATES = ("unresolved_error", "unverified_work", "open_question",
           "stated_next_step", "big_new_task", "continue")
 
@@ -126,7 +131,9 @@ CONTINUE_RE = re.compile(r"^\s*(?:please\s+)?continue\b|^\s*keep (?:it )?going\b
                          re.I)
 
 STEP_RE = re.compile(
-    r"\bnext\s*:|\bthen\b|\bafter that\b|\bstep\s*\d+\b|\blet'?s\s+"
+    r"\bnext\s*:|"
+    r"\bnext\s*[,:]?\s*(?:i(?:['’]ll| will)|we(?:['’]ll| will))\b|"
+    r"\bthen\b|\bafter that\b|\bstep\s*\d+\b|\blet'?s\s+"
     r"(?:do|go with|use|run|start|move|switch)\b|\border of operations\b",
     re.I)
 
@@ -242,11 +249,19 @@ def _options_from(posing: str, turns: list[dict], posing_turn: int
 
 
 def _clean_opt(bit: str) -> str:
+    b = bit.strip()
+    b = re.sub(r"^(?:(?:two|three|both|a few|several|other)\s+)?"
+               r"options?\s*[:：]\s*", "", b, flags=re.I)
+    b = re.sub(r"^option\s+[a-z0-9]{1,2}\s*[:.)\-]\s*", "", b, flags=re.I)
+    b = re.sub(r"^\d{1,2}\s*[.)\-]\s*", "", b)
     b = re.sub(r"^(?:should\s+i|would\s+you|do\s+you\s+want(?:\s+to)?|"
-               r"which|or)\s+", "", bit.strip(), flags=re.I)
+               r"which|or)\s+", "", b, flags=re.I)
+    b = re.split(r"\.\s+(?=(?:which|what|should|do you|would|is|are|can|"
+                 r"could)\b)", b, maxsplit=1, flags=re.I)[0]
     b = re.sub(r"[?,]+$", "", b)
     b = re.sub(r"\s+(?:instead|rather|then|about)\.?$", "", b, flags=re.I)
     b = b.split(",")[0].strip()
+    b = re.sub(r"[.\s]+$", "", b)
     return b[:60]
 
 
@@ -303,7 +318,10 @@ def _ask_sentences(text: str) -> list[str]:
         first = _words(s[:24])
         if first and first[0] in ASK_VERBS:
             out.append(s)
-        elif "make sure" in _norm(s):
+        elif "make sure" in _norm(s) and not NEG_CLAUSE_RE.search(s):
+            # negated make-sure ("make sure you don't touch X") is a rule
+            # clause — it lands in constraints/broke_rule, never in the
+            # ask lane (double-counting it made the card lead wrong).
             out.append(s)
     return out
 
@@ -387,6 +405,10 @@ def classify(turns: list[dict], decision: dict) -> str:
         last_line = [l for l in la["text"].splitlines() if l.strip()]
         if last_line and last_line[-1].strip().endswith("?"):
             return "open_question"
+        if STEP_RE.search(la["text"]):
+            # agent announced its own next step ("Next I'll run the
+            # migration") — greenlight it, never fall to bare Continue.
+            return "stated_next_step"
     if lu is not None:
         if decision.get("resolved_by_turn") == lu["index"]:
             return "stated_next_step"
@@ -420,7 +442,8 @@ def _claim_object(text: str) -> str:
 def _step_sentence(text: str) -> str | None:
     for sent in _sentences(text):
         if STEP_RE.search(sent):
-            return re.sub(r"^(?:and\s+)?next\s*:\s*", "", sent,
+            return re.sub(r"^(?:and\s+)?next\s*(?:[:,]\s*|\s+)"
+                          r"(?:(?:i|we)(?:['’]ll| will)\s+)?", "", sent,
                           flags=re.I).strip()
     return None
 
@@ -472,10 +495,26 @@ def build_message(state, turns, constraints, decision, violations,
             if c0:
                 msg += f" {c0}."
             return msg
+        la = _last_assistant(turns)
+        if (la and lu and la["index"] > lu["index"]
+                and STEP_RE.search(la["text"])):
+            step = _step_sentence(la["text"])
+            if step:
+                msg = f"Go ahead — {step.rstrip('.')}."
+                if c0:
+                    msg += f" {c0}."
+                return msg
         if lu:
             step = _step_sentence(lu["text"])
             if step:
-                msg = f"{step}."
+                msg = f"{step.rstrip('.')}."
+                if c0:
+                    msg += f" {c0}."
+                return msg
+        if la:
+            step = _step_sentence(la["text"])
+            if step:
+                msg = f"Go ahead — {step.rstrip('.')}."
                 if c0:
                     msg += f" {c0}."
                 return msg
@@ -543,7 +582,11 @@ def build_why(state, turns, constraints, decision, violations) -> list[dict]:
                 "your later turn resolved the choice (recency wins)")
         else:
             lu = _last_user(turns)
-            if lu:
+            la = _last_assistant(turns)
+            if (la and (not lu or la["index"] > lu["index"])
+                    and STEP_RE.search(la["text"])):
+                add(la["index"], "the assistant stated the next step")
+            elif lu:
                 add(lu["index"], _WHY_WHY[state][0])
     elif state == "big_new_task":
         lu = _last_user(turns)
@@ -564,6 +607,50 @@ def build_why(state, turns, constraints, decision, violations) -> list[dict]:
     return why
 
 
+# ------------------------------------------------------- output scrubbing
+
+_SECRET_PATS = [
+    (re.compile(
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?"
+        r"-----END [A-Z ]*PRIVATE KEY-----", re.S),
+     "[REDACTED:private key]"),
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "[REDACTED:aws key]"),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+     "[REDACTED:github token]"),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+     "[REDACTED:slack token]"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"), "[REDACTED:api key]"),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"), "[REDACTED:google key]"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
+                r"\.[A-Za-z0-9_-]{8,}\b"), "[REDACTED:jwt]"),
+    (re.compile(r"(?i)\b(?:bearer|token)\s+[A-Za-z0-9._-]{16,}\b"),
+     "[REDACTED:token]"),
+    (re.compile(
+        r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|apikey|"
+        r"access[_-]?key|auth[_-]?token|private[_-]?key)"
+        r"(\s*[:=]\s*)([\"']?)[^\s\"',;]+"),
+        r"\1\2\3[REDACTED]"),
+]
+
+
+def _scrub(text: str) -> str:
+    """mask credential-shaped substrings. Transcript text may contain
+    real secrets; the card must not echo them (CLI, /api/next, score)."""
+    for pat, rep in _SECRET_PATS:
+        text = pat.sub(rep, text)
+    return text
+
+
+def _scrub_card(obj):
+    if isinstance(obj, str):
+        return _scrub(obj)
+    if isinstance(obj, list):
+        return [_scrub_card(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _scrub_card(v) for k, v in obj.items()}
+    return obj
+
+
 def analyze(transcript: str) -> dict:
     """transcript -> full card. One entrypoint."""
     turns = split_turns(transcript)
@@ -578,7 +665,7 @@ def analyze(transcript: str) -> dict:
     alts = list(_ALTS["unresolved_error_violation"] if violations
                 else _ALTS[state])
     alts = [a for a in alts if a != message][:2] + ["Continue."]
-    return {
+    return _scrub_card({
         "state": state,
         "message": message,
         "your_call": your_call,
@@ -589,10 +676,27 @@ def analyze(transcript: str) -> dict:
         "alternatives": list(dict.fromkeys(alts))[:3],
         "turn_count": len(turns),
         "schema": 1,
-    }
+    })
 
 
 # ------------------------------------------------------------------ scorer
+
+def _lev_words(a: str, b: str) -> int:
+    """word-level Levenshtein on normalized tokens — how many words chef
+    would change before pressing enter."""
+    ta = re.findall(r"[a-z0-9']+", a.lower())
+    tb = re.findall(r"[a-z0-9']+", b.lower())
+    if not ta or not tb:
+        return abs(len(ta) - len(tb))
+    prev = list(range(len(tb) + 1))
+    for i, wa in enumerate(ta, 1):
+        cur = [i]
+        for j, wb in enumerate(tb, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1,
+                           prev[j - 1] + (wa != wb)))
+        prev = cur
+    return prev[-1]
+
 
 def score_fixtures(fixtures_dir: str | Path) -> dict:
     """run the 10 fixtures against PASSBAR conditions. Ground truth is
@@ -625,6 +729,9 @@ def score_fixtures(fixtures_dir: str | Path) -> dict:
         exp_kinds = {v["kind"] for v in fx.get("violations_expected", [])}
         got_kinds = {v["kind"] for v in a["violations"]}
         v_hit = exp_kinds <= got_kinds if exp_kinds else got_kinds == set()
+        exp_msg = fx.get("expected_message")
+        edits = _lev_words(a["message"], exp_msg) if exp_msg else None
+        c_edits = _lev_words("Continue.", exp_msg) if exp_msg else None
         viol_hits += int(v_hit)
         viol_expected += len(exp_kinds)
         intent_ok += int(i_ok)
@@ -636,8 +743,28 @@ def score_fixtures(fixtures_dir: str | Path) -> dict:
                      "constraints": c_ok, "invented": inv,
                      "violations_ok": v_hit,
                      "your_call": a["your_call"],
-                     "message": a["message"]})
+                     "message": a["message"],
+                     "edits": edits, "continue_edits": c_edits})
     n = len(files)
+    measured = [r for r in rows if r["edits"] is not None]
+    within = EDIT_WORDS_MAX
+    mq = {
+        "measured": len(measured),
+        "edit_words_max": within,
+        "edit_miss": sum(1 for r in measured if r["edits"] > within),
+        "engine_sendable": sum(1 for r in measured if r["edits"] <= within),
+        "continue_sendable": sum(1 for r in measured
+                                 if r["continue_edits"] <= within),
+        "tool_added_value": sum(1 for r in measured
+                                if r["edits"] <= within
+                                and r["continue_edits"] > within),
+        "tied_with_continue": sum(1 for r in measured
+                                  if r["edits"] <= within
+                                  and r["continue_edits"] <= within),
+        "worse_than_continue": sum(1 for r in measured
+                                   if r["edits"] > within
+                                   and r["continue_edits"] <= within),
+    }
     bar = {
         "intent": {"got": intent_ok, "need": PASS_BAR["intent_min"],
                    "ok": intent_ok >= PASS_BAR["intent_min"]},
@@ -648,25 +775,34 @@ def score_fixtures(fixtures_dir: str | Path) -> dict:
     }
     passed = all(v["ok"] for v in bar.values())
     return {"n": n, "rows": rows, "bar": bar, "passed": passed,
+            "message_quality": mq,
             "violation_detection": {"fixtures_ok": viol_hits,
                                     "total": n}}
 
 
 def _print_report(rep: dict) -> None:
     print(f"{'id':<6}{'expected':<20}{'engine':<20}"
-          f"{'intent':<8}{'constr':<8}{'inv':<6}{'viol':<6}")
+          f"{'intent':<8}{'constr':<8}{'inv':<6}{'viol':<6}{'edits':<7}")
     for r in rep["rows"]:
+        edits = "-" if r.get("edits") is None else str(r["edits"])
         print(f"{r['id']:<6}{r['expected']:<20}{r['engine']:<20}"
               f"{'ok' if r['intent'] else 'MISS':<8}"
               f"{'ok' if r['constraints'] else 'MISS':<8}"
               f"{'INV' if r['invented'] else '-':<6}"
-              f"{'ok' if r['violations_ok'] else 'MISS':<6}")
-    print("-" * 74)
+              f"{'ok' if r['violations_ok'] else 'MISS':<6}"
+              f"{edits:<7}")
+    print("-" * 81)
     for k, v in rep["bar"].items():
         print(f"{k:<16} {v}")
     print("violation detection (report-only):",
           f"{rep['violation_detection']['fixtures_ok']}"
           f"/{rep['violation_detection']['total']} fixtures exact")
+    mq = rep["message_quality"]
+    print(f"message quality (report-only, <= {mq['edit_words_max']} word "
+          f"edits = sendable): engine {mq['engine_sendable']}"
+          f"/{mq['measured']} sendable, {mq['edit_miss']} edit-misses; "
+          f"beats continue {mq['tool_added_value']}, ties "
+          f"{mq['tied_with_continue']}, worse {mq['worse_than_continue']}")
     print("RESULT:", "PASS" if rep["passed"] else "FAIL")
 
 

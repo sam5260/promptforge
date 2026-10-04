@@ -249,5 +249,70 @@ class TestCli(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
 
 
+class TestBugsFromRealTranscripts(unittest.TestCase):
+    """regressions for the four bugs found in the first real chats."""
+
+    def test_secret_never_reaches_card(self):
+        card = nextmsg.analyze(
+            "user: Ship the config. Make sure you never commit the prod DB "
+            "password: hunter2supersecret and never paste "
+            "sk-live-9f3abcDEFGH1234567xyz or "
+            "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789.\n"
+            "assistant: Committed.")
+        blob = json.dumps(card, ensure_ascii=False)
+        for secret in ("hunter2supersecret", "sk-live-9f3abcDEFGH1234567xyz",
+                       "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"):
+            self.assertNotIn(secret, blob)
+        self.assertIn("REDACTED", blob)
+        self.assertTrue(card["constraints_carried"])
+        self.assertEqual([v["kind"] for v in card["violations"]],
+                         ["broke_rule"])
+
+    def test_rule_sentence_not_double_counted(self):
+        card = nextmsg.analyze(
+            "user: Make sure you don't touch the payment API.\n"
+            "assistant: I updated the payment API client to stabilize "
+            "retries.")
+        self.assertEqual([v["kind"] for v in card["violations"]],
+                         ["broke_rule"])
+        self.assertNotIn("Make sure you don't touch", card["message"])
+
+    def test_option_lead_in_stripped(self):
+        card = nextmsg.analyze(
+            "user: We need a cache.\n"
+            "assistant: Two options: Redis or Memcached, both self-hosted. "
+            "Which one do you want?")
+        self.assertEqual(card["decisions"][0]["options"],
+                         ["Redis", "Memcached"])
+        self.assertNotIn("Two options", card["message"])
+
+    def test_assistant_next_ill_announced(self):
+        card = nextmsg.analyze(
+            "user: Go ahead with the deploy plan when tests are green.\n"
+            "assistant: Done — tests pass. Next I'll run the migration.")
+        self.assertEqual(card["state"], "stated_next_step")
+        self.assertIn("migration", card["message"])
+        self.assertNotEqual(card["message"], "Continue.")
+        self.assertNotIn("..", card["message"])
+        self.assertEqual(card["why"][0]["turn"], 2)
+
+    def test_user_next_ill_not_bare_continue(self):
+        card = nextmsg.analyze(
+            "user: Looks good. Next I'll run the migration myself.")
+        self.assertEqual(card["state"], "stated_next_step")
+        self.assertNotEqual(card["message"], "Continue.")
+        self.assertIn("migration", card["message"])
+        self.assertNotIn("..", card["message"])
+
+    @unittest.skipUnless(HAVE_FIXTURES, "fixtures/ not present")
+    def test_message_quality_numbers_reported(self):
+        rep = nextmsg.score_fixtures(FIXTURES)
+        mq = rep["message_quality"]
+        self.assertEqual(mq["measured"], rep["n"])
+        for key in ("edit_miss", "engine_sendable", "tool_added_value",
+                    "tied_with_continue", "worse_than_continue"):
+            self.assertIn(key, mq)
+
+
 if __name__ == "__main__":
     unittest.main()
