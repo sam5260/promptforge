@@ -42,7 +42,7 @@ Latest: intent 10/10, constraints 10/10, invented 0, violations 10/10
 exact, `Continue.` scores 1/10. Message quality (report-only, ≤ 3 word
 edits vs what you actually sent): 1/10 sendable, 9 edit-misses, 0 worse
 than `Continue.` — the engine classifies faithfully but words its
-messages differently than you do. 162 tests.
+messages differently than you do. 173 tests.
 
 ## How it reads a chat
 
@@ -156,7 +156,7 @@ re-scores the full fixture bar every run.
   fixed with regressions (secret scrub at the output boundary, rule
   sentences out of the ask lane, option lead-ins stripped, "Next I'll…"
   recognized), plus two report-only message measures (word-edit distance
-  vs what you sent, beats-`Continue.` per fixture). 162 tests.
+  vs what you sent, beats-`Continue.` per fixture). 173 tests.
 
 ## Scope
 

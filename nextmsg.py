@@ -139,7 +139,7 @@ STEP_RE = re.compile(
 
 CONSTR_RE = re.compile(
     r"\b(?:don'?t|do not|never|must not|without|only|keep|make sure|avoid|"
-    r"no)\b", re.I)
+    r"always|no)\b", re.I)
 
 ASK_VERBS = ("run", "fix", "add", "check", "test", "verify", "show", "give",
              "paste", "send", "update", "write", "migrate", "remove",
@@ -226,58 +226,113 @@ def _posing_sentence(turns: list[dict]) -> tuple[int, str] | None:
     return best
 
 
+_OPT_SPLIT_RE = re.compile(r",\s*|\s+or\s+|\s+vs\.?\s+|\s+versus\s+",
+                           re.I)
+
+_OPT_HEAD_STRIP = {
+    "which", "what", "how", "should", "can", "could", "would",
+    "do", "does", "did", "is", "are", "i", "we", "you", "they", "it",
+    "to", "use", "using", "want", "need", "prefer", "go", "with",
+    "pick", "choose", "take", "for", "in", "on", "at", "by",
+    "the", "a", "an", "me", "us", "them", "my", "our", "your", "of",
+    "rather", "like", "sure", "yeah", "instead", "also", "'s",
+}
+
+_OPT_VERB_CUT_RE = re.compile(r"\s+(?:is|are|was|were|would|should|can|"
+                              r"could|will|has|have|feels|looks|seems|"
+                              r"sounds|works|runs|gets|provides|keeps|"
+                              r"handles|covers|does|means)\b.*$", re.I)
+
+_OPT_QUAL_META_RE = re.compile(r"^(?:both|either|all|any|whatever|"
+                               r"whichever|that|this|none|no)\b", re.I)
+
+_OPT_TAIL_CUT_RE = re.compile(r"\s+(?:for|in|on|at|during|under|while|"
+                              r"with|from|into|to|of|where|when|and|"
+                              r"but)\b.+$", re.I)
+
+
+def _clean_opt(bit: str) -> str:
+    if bit is None:
+        return ""
+    b = bit.strip().strip(" ;:")
+    b = re.sub(r"^or\s+", "", b, flags=re.I)
+    b = re.sub(r"^(?:(?:two|three|both|a few|several|other)\s+)?"
+               r"options?\s*[:：]\s*", "", b, flags=re.I)
+    b = re.sub(r"^option\s+[a-z0-9]{1,2}\s*[:.)\-]\s*", "", b, flags=re.I)
+    b = re.sub(r"^\d{1,2}\s*[.)\-]\s*", "", b)
+    b = _OPT_VERB_CUT_RE.sub("", b, count=1)
+    words = b.split()
+    while words and words[0].lower().strip("'’") in _OPT_HEAD_STRIP:
+        words.pop(0)
+    b = " ".join(words)
+    b = _OPT_TAIL_CUT_RE.sub("", b)
+    b = re.sub(r"[?,\.!…]+$", "", b).strip()
+    if not b:
+        return ""
+    if _OPT_QUAL_META_RE.match(b):
+        return ""
+    toks = b.split()
+    if len(toks) > 3:
+        return ""
+    if len(toks) >= 2 and all(w[0].islower() for w in toks):
+        # a fully-lowercase multiword phrase is a qualifier, not a name
+        return ""
+    return b[:60]
+
+
 def _options_from(posing: str, turns: list[dict], posing_turn: int
                   ) -> list[str]:
-    if " or " in posing.lower():
-        bits = re.split(r",?\s+or\s+", posing, flags=re.I)
-        opts = [_clean_opt(b) for b in bits[:2]]
-        return [o for o in opts if o]
-    # fall back: " or " in a neighbouring sentence of the same turn
-    for t in turns:
-        if t["index"] != posing_turn:
-            continue
-        for sent in _sentences(t["text"]):
-            if " or " in sent.lower() and sent != posing:
-                bits = re.split(r",?\s+or\s+", sent, flags=re.I)
-                opts = [_clean_opt(b) for b in bits[:2]]
-                opts = [o for o in opts if o]
-                if opts:
-                    return opts
+    text = posing
+    if (" or " not in posing.lower()) and (" vs " not in posing.lower()):
+        # fall back: " or " in a neighbouring sentence of the same turn
+        for t in turns:
+            if t["index"] != posing_turn:
+                continue
+            for sent in _sentences(t["text"]):
+                if sent != posing and _OPT_SPLIT_RE.search(sent):
+                    text = sent
+                    break
+    out: list[str] = []
+    for part in _OPT_SPLIT_RE.split(text):
+        c = _clean_opt(part)
+        if c and c.lower() not in (o.lower() for o in out):
+            out.append(c)
+    if out:
+        return out[:6]
     # last resort: proper nouns in the posing sentence + nearby offers
     opts = re.findall(r"\b([A-Z][a-zA-Z]{2,})\b", posing)
     return [o for o in opts if o not in ("Should", "Which", "What", "The")]
 
 
-def _clean_opt(bit: str) -> str:
-    b = bit.strip()
-    b = re.sub(r"^(?:(?:two|three|both|a few|several|other)\s+)?"
-               r"options?\s*[:：]\s*", "", b, flags=re.I)
-    b = re.sub(r"^option\s+[a-z0-9]{1,2}\s*[:.)\-]\s*", "", b, flags=re.I)
-    b = re.sub(r"^\d{1,2}\s*[.)\-]\s*", "", b)
-    b = re.sub(r"^(?:should\s+i|would\s+you|do\s+you\s+want(?:\s+to)?|"
-               r"which|or)\s+", "", b, flags=re.I)
-    b = re.split(r"\.\s+(?=(?:which|what|should|do you|would|is|are|can|"
-                 r"could)\b)", b, maxsplit=1, flags=re.I)[0]
-    b = re.sub(r"[?,]+$", "", b)
-    b = re.sub(r"\s+(?:instead|rather|then|about)\.?$", "", b, flags=re.I)
-    b = b.split(",")[0].strip()
-    b = re.sub(r"[.\s]+$", "", b)
-    return b[:60]
+def _question_ctx(sent: str) -> str | None:
+    m = re.search(r"\bfor the ([^?\n,]{2,40})", sent, re.I)
+    if m:
+        return "for the " + m.group(1).strip()
+    return None
 
 
 def extract_decision(turns: list[dict]) -> dict:
     """posed question -> options; resolution = LAST user turn that names an
-    option or says let's-do (recency: later 'actually B' beats earlier A)."""
-    posed = _posing_sentence(turns)
-    if not posed:
+    option or says let's-do (recency: later 'actually B' beats earlier A)
+    and only for turns AFTER that question. Earlier resolved questions are
+    kept separately (prior_choice / prior_ctx) so the engine can flag a
+    contradicting preference instead of silently overwriting it."""
+    questions = []
+    for t in turns:
+        for sent in _sentences(t["text"]):
+            if sent.endswith("?") and len(sent) > 12:
+                questions.append((t["index"], sent))
+    if not questions:
         return {"available": False, "posing_turn": None, "options": [],
-                "resolved_by_turn": None, "choice": None}
-    pturn, psent = posed
+                "resolved_by_turn": None, "choice": None,
+                "prior_choice": None, "prior_ctx": None, "ctx": None,
+                "posing_sent": None}
+    pturn, psent = questions[-1]
     options = _options_from(psent, turns, pturn)
     resolved_by, choice = None, None
     opt_tokens = {o.lower() for o in options}
     for t in turns:
-        if t["role"] != "user":
+        if t["role"] != "user" or t["index"] <= pturn:
             continue
         m = _CHOICE_DO_RE.search(t["text"])
         if m:
@@ -289,8 +344,34 @@ def extract_decision(turns: list[dict]) -> dict:
                 resolved_by, choice = t["index"], options[
                     [o.lower() for o in options].index(tok)]
                 break
-    return {"available": True, "posing_turn": pturn, "options": options,
-            "resolved_by_turn": resolved_by, "choice": choice}
+    prior_choice = prior_ctx = None
+    for qt_turn, qt_sent in reversed(questions[:-1]):
+        opts_q = _options_from(qt_sent, turns, qt_turn)
+        if not opts_q:
+            continue
+        found = None
+        for t in turns:
+            if t["role"] != "user" or t["index"] <= qt_turn \
+                    or t["index"] >= pturn:
+                continue
+            tl = _norm(t["text"])
+            for tok in {o.lower() for o in opts_q}:
+                if len(tok) >= 3 and re.search(rf"\b{re.escape(tok)}\b",
+                                               tl):
+                    found = tok
+                    break
+            if found:
+                break
+        if found:
+            prior_choice = opts_q[
+                [o.lower() for o in opts_q].index(found)]
+            prior_ctx = _question_ctx(qt_sent)
+            break
+    return {"available": bool(options), "posing_turn": pturn,
+            "options": options,
+            "resolved_by_turn": resolved_by, "choice": choice,
+            "prior_choice": prior_choice, "prior_ctx": prior_ctx,
+            "ctx": _question_ctx(psent), "posing_sent": psent}
 
 
 # -------------------------------------------------------------- violations
@@ -340,10 +421,32 @@ def _covered(ask: str, reply: str) -> bool:
     return False
 
 
+_NEG_WORD_RE = re.compile(r"\b(never|don'?t|do not|must not|without)\b",
+                          re.I)
+
+_ALWAYS_RE = re.compile(r"\balways\s+(.+)$", re.I)
+
+_OBJ_DIR_WORDS = {"to", "for", "with", "if", "but", "and", "when",
+                    "after", "before", "then", "please", "directly",
+                    "immediately", "so", "via", "just", "instead"}
+
+
+def _past(verb: str) -> str:
+    v = verb.strip().lower()
+    if v.endswith("y") and len(v) > 2 and v[-2] not in "aeiou":
+        return v[:-1] + "ied"
+    if v.endswith("e"):
+        return v + "d"
+    return v + "ed"
+
+
 def check_violations(turns: list[dict], constraints: list[dict],
                      state: str) -> list[dict]:
-    """ignored_ask: standing user ask vs the agent's last reply.
-    broke_rule: a negated rule whose object the last reply touched."""
+    """ignored_ask: standing user ask vs the agent's last reply — reported
+    only if that reply does not claim to address the ask.
+    broke_rule: a stated rule whose object the last reply touched (negated
+    clause) or whose required action is absent from claimed work
+    ('always ... before ...' clauses). broke_rule entries lead."""
     out = []
     lu, la = _last_user(turns), _last_assistant(turns)
     if lu is None or la is None or la["index"] < lu["index"]:
@@ -351,27 +454,96 @@ def check_violations(turns: list[dict], constraints: list[dict],
     err_fresh = (state == "unresolved_error"
                  and _error_turn(turns) == la["index"])
     if not err_fresh:
+        la_text = la["text"]
+        claim_like = bool(CLAIM_RE.search(la_text)
+                          or GENERIC_ACTION_RE.search(la_text))
         for ask in _ask_sentences(lu["text"]):
-            if not _covered(ask, la["text"]):
-                out.append({"kind": "ignored_ask",
-                            "detail": ask[:80], "object": None,
-                            "rule_turn": lu["index"],
-                            "evidence_turn": la["index"]})
+            content = _content(ask)
+            hits = 0
+            if content:
+                rl = _norm(la_text)
+                hits = sum(1 for c in content
+                           if re.search(rf"(?<![a-z0-9_]){re.escape(c)}",
+                                        rl))
+            if _covered(ask, la_text):
+                continue
+            # the agent claimed some work that overlaps the ask's subject
+            # — not an ignored ask, just incomplete work
+            if claim_like and hits >= 1:
+                continue
+            out.append({"kind": "ignored_ask",
+                        "detail": ask[:80], "object": None,
+                        "rule_turn": lu["index"],
+                        "evidence_turn": la["index"]})
     for c in constraints:
         m = NEG_CLAUSE_RE.search(c["text"])
-        if not m:
+        if m:
+            head, obj = m.group(1).lower(), m.group(2)
+            obj = re.split(r"[,]", m.group(2), maxsplit=1)[0].strip()
+            obj = re.split(r"\s+—\s+", obj, maxsplit=1)[0].strip()
+            parts = obj.split()
+            cut = len(parts)
+            for i, p in enumerate(parts):
+                if p.lower() in _OBJ_DIR_WORDS:
+                    cut = i
+                    break
+            obj = " ".join(parts[:cut]).strip().rstrip(" .")
+            rl = _norm(la["text"])
+            head_hit = len(head) >= 4 and head[:5] in rl
+            obj_hit = bool(obj) and any(w[:5] in rl for w in _words(obj)
+                                        if len(w) >= 4)
+            if head_hit or (GENERIC_ACTION_RE.search(la["text"])
+                            and obj_hit):
+                neg = _NEG_WORD_RE.search(c["text"])
+                out.append({"kind": "broke_rule",
+                            "detail": c["text"][:80],
+                            "object": obj.split(",")[0][:60]
+                            or c["text"][:60],
+                            "verb": head,
+                            "neg": neg.group(1).lower()
+                            if neg else None,
+                            "lane": "neg",
+                            "rule_turn": c["turn"],
+                            "evidence_turn": la["index"]})
             continue
-        head, obj = m.group(1).lower(), m.group(2)
-        obj = re.split(r"[,—.]| — ", obj)[0].strip()
+        m2 = _ALWAYS_RE.search(c["text"])
+        if not m2:
+            continue
+        req_full = m2.group(1).strip().rstrip(".")
+        pre = re.split(r"\s+before\b", req_full, maxsplit=1,
+                       flags=re.I)[0].strip()
+        content = _content(pre)
         rl = _norm(la["text"])
-        head_hit = len(head) >= 4 and head[:5] in rl
-        obj_hit = bool(obj) and any(w[:5] in rl for w in _words(obj)
-                                    if len(w) >= 4)
-        if head_hit or (GENERIC_ACTION_RE.search(la["text"]) and obj_hit):
-            out.append({"kind": "broke_rule", "detail": c["text"][:80],
-                        "object": obj.split(",")[0][:60] or c["text"][:60],
+        hits = sum(1 for s in content
+                   if re.search(rf"(?<![a-z0-9_]){re.escape(s)}", rl))
+        claiming = bool(CLAIM_RE.search(la["text"])
+                        or GENERIC_ACTION_RE.search(la["text"]))
+        # the agent claimed the work but never produced the required
+        # companion artifact (the diff, the tests) — the always-rule is
+        # broken, not satisfied. A mention of the stem next to 'no/not/
+        # without/never' counts as withheld, not satisfied.
+        unsatisfied = 0
+        for s in content:
+            pat = re.escape(s)
+            idx = rl.find(s)
+            mentioned = idx != -1
+            if mentioned:
+                window = rl[max(0, idx - 30):idx]
+                if re.search(r"\b(?:no|not|without|never)\b", window):
+                    unsatisfied += 1
+                else:
+                    break
+            else:
+                unsatisfied += 1
+        if claiming and content and len(content) > 0 and unsatisfied == len(content):
+            out.append({"kind": "broke_rule",
+                        "detail": c["text"][:80],
+                        "object": pre[:60],
+                        "verb": None, "neg": "always",
+                        "lane": "always", "req_op": pre,
                         "rule_turn": c["turn"],
                         "evidence_turn": la["index"]})
+    out.sort(key=lambda v: 0 if v["kind"] == "broke_rule" else 1)
     return out
 
 
@@ -453,17 +625,47 @@ def build_message(state, turns, constraints, decision, violations,
     lu = _last_user(turns)
     c0 = constraints[0]["text"] if constraints else None
     if violations:
-        ign = next((v for v in violations if v["kind"] == "ignored_ask"), None)
-        rule = next((v for v in violations if v["kind"] == "broke_rule"), None)
-        msg = "You didn't do what I asked"
-        if ign:
-            msg += f": {ign['detail'].rstrip('.')}"
-        msg += ". Fix that before moving on"
-        if rule:
-            msg += f", and don't change {rule['object']}."
-        else:
-            msg += "."
-        return msg
+        rules = [v for v in violations if v["kind"] == "broke_rule"]
+        igns = [v for v in violations if v["kind"] == "ignored_ask"]
+        frags = []
+        for r in rules:
+            if r.get("lane") == "always":
+                op = r.get("req_op")
+                if op:
+                    frags.append(f"Revert it and {op} before anything else.")
+                continue
+            if r.get("verb") and r.get("object"):
+                frags.append(f"You {_past(r['verb'])} {r['object']}.")
+                n = r.get("neg")
+                if n == "never":
+                    frags.append("I said never to.")
+                elif n in ("don't", "do not", "must not"):
+                    frags.append("I said not to.")
+                elif n == "without":
+                    frags.append("I said not to involve.")
+        # any directive the user gave that the reply never acknowledged
+        la = _last_assistant(turns)
+        if lu and la:
+            for sent in _sentences(lu["text"]):
+                s = re.sub(r"^(?:and|also|plus)\s+", "", sent.strip(),
+                           flags=re.I)
+                if re.match(r"^then\b", s, re.I) and not _covered(
+                        s, la["text"]):
+                    b = s[0].upper() + s[1:]
+                    if not b.endswith((".", "!", "?")):
+                        b += "."
+                    frags.append(b)
+        if not frags:
+            ign = igns[0] if igns else None
+            rule = rules[0] if rules else None
+            msg = "You didn't do what I asked"
+            if ign:
+                msg += f": {ign['detail'].rstrip('.')}"
+            msg += ". Fix that before moving on"
+            if rule and rule.get("object"):
+                msg += f", and don't change {rule['object']}"
+            return msg + "."
+        return " ".join(frags)
     if state == "unresolved_error":
         e = _error_turn(turns) or 0
         msg = (f"The error is still open ({_error_excerpt(turns, e)}) — "
@@ -486,9 +688,26 @@ def build_message(state, turns, constraints, decision, violations,
             msg += f" {c0}."
         return msg
     if state == "open_question" and your_call and decision["options"]:
-        a = decision["options"][0]
-        b = decision["options"][1] if len(decision["options"]) > 1 else "?"
-        return f"your call — {a} or {b}. Nothing moves until you pick."
+        opts_list = decision["options"][:3]
+        if len(opts_list) > 2:
+            opts = ", ".join(opts_list[:-1]) + ", or " + opts_list[-1]
+        else:
+            opts = " or ".join(opts_list)
+        ctx = decision.get("ctx")
+        line = f"Your call: {opts}{' ' + ctx if ctx else ''}."
+        if decision.get("prior_choice"):
+            prior_ctx = decision.get("prior_ctx")
+            if prior_ctx:
+                line += (f" (Your {decision['prior_choice']} preference was "
+                         f"{prior_ctx}.)")
+            else:
+                line += (f" (Your {decision['prior_choice']} preference was made "
+                         "earlier in this thread.)")
+        else:
+            line += " Nothing moves until you pick."
+        if c0:
+            line += f" {c0.rstrip('.')}."
+        return line
     if state == "stated_next_step":
         if decision.get("choice") and decision.get("resolved_by_turn"):
             msg = f"Go with {decision['choice']}."

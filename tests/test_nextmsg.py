@@ -134,6 +134,34 @@ class TestDecisions(unittest.TestCase):
         self.assertFalse(card["decisions"][0]["available"])
         self.assertIsNone(card["decisions"][0]["choice"])
 
+    def test_options_comma_fronted_question(self):
+        card = nextmsg.analyze(
+            "assistant: Which ORM do you want, SQLAlchemy or Peewee?")
+        self.assertEqual(card["decisions"][0]["options"],
+                         ["SQLAlchemy", "Peewee"])
+
+    def test_options_which_of_x_or_y(self):
+        card = nextmsg.analyze(
+            "assistant: Which of Redis or Memcached should we run?")
+        self.assertEqual(card["decisions"][0]["options"],
+                         ["Redis", "Memcached"])
+
+    def test_options_vs(self):
+        card = nextmsg.analyze("assistant: Redis vs Memcached for the L2?")
+        self.assertEqual(card["decisions"][0]["options"],
+                         ["Redis", "Memcached"])
+
+    def test_options_three_way_comma_list(self):
+        card = nextmsg.analyze(
+            "assistant: Should I use Redis, Memcached, or LiteCache?")
+        self.assertEqual(card["decisions"][0]["options"],
+                         ["Redis", "Memcached", "LiteCache"])
+
+    def test_options_bare_or_question(self):
+        card = nextmsg.analyze("assistant: Redis or Memcached?")
+        self.assertEqual(card["decisions"][0]["options"],
+                         ["Redis", "Memcached"])
+
 
 class TestConstraints(unittest.TestCase):
     def test_rule_clause_extracted_with_turn(self):
@@ -189,6 +217,48 @@ class TestViolations(unittest.TestCase):
             "ECONNREFUSED.")
         self.assertEqual(card["state"], "unresolved_error")
         self.assertEqual(card["violations"], [])
+
+    def test_broke_rule_preserves_file_extension(self):
+        card = nextmsg.analyze(
+            "user: Never edit config.py and never touch src/app.test.ts.\n"
+            "assistant: Edited config.py and updated src/app.test.ts to "
+            "bump the version.")
+        objs = [v.get("object") for v in card["violations"]
+                if v["kind"] == "broke_rule"]
+        self.assertTrue(any(o and "config.py" in o for o in objs), objs)
+
+    def test_broke_rule_dot_env_preserved(self):
+        card = nextmsg.analyze(
+            "user: Never commit .env to the repo.\n"
+            "assistant: Committed .env along with the new secrets file.")
+        objs = [v.get("object") for v in card["violations"]
+                if v["kind"] == "broke_rule"]
+        self.assertTrue(any(o and ".env" in o for o in objs), objs)
+
+    def test_always_diff_rule_fires(self):
+        card = nextmsg.analyze(
+            "user: Always show me the diff before applying anything.\n"
+            "assistant: Applied the config change directly, no diff "
+            "this time.")
+        kinds = [v["kind"] for v in card["violations"]]
+        self.assertIn("broke_rule", kinds)
+
+    def test_always_diff_rule_satisfied(self):
+        card = nextmsg.analyze(
+            "user: Always show me the diff before applying anything.\n"
+            "assistant: Showed the diff above, and applied it after you "
+            "said go.")
+        self.assertEqual(card["violations"], [])
+
+    def test_violation_message_leads_with_broken_rule(self):
+        card = nextmsg.analyze(
+            "user: Fix the login bug. Never edit config.py.\n"
+            "assistant: Edited config.py to fix the login error and the "
+            "config parser.")
+        self.assertEqual(card["violations"][0]["kind"], "broke_rule")
+        self.assertIn("config.py", card["message"])
+        self.assertIn("I said never to", card["message"])
+        self.assertNotIn("You didn't do what I asked", card["message"])
 
 
 class TestScorerBar(unittest.TestCase):
@@ -312,6 +382,18 @@ class TestBugsFromRealTranscripts(unittest.TestCase):
         for key in ("edit_miss", "engine_sendable", "tool_added_value",
                     "tied_with_continue", "worse_than_continue"):
             self.assertIn(key, mq)
+
+    @unittest.skipUnless(HAVE_FIXTURES, "fixtures/ not present")
+    def test_dev_pastes_meet_expected_messages(self):
+        dev = Path(FIXTURES)
+        for name in ("dev-a2", "dev-a3", "dev-a5", "dev-a7"):
+            fx = json.loads((dev / f"{name}.json").read_text(
+                encoding="utf-8"))
+            a = nextmsg.analyze(fx["transcript"])
+            self.assertEqual(a["state"], fx["expected_state"],
+                             f"{name}: state")
+            self.assertEqual(a["message"], fx["expected_message"],
+                             f"{name}: message")
 
 
 if __name__ == "__main__":
